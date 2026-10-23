@@ -232,7 +232,8 @@ function Workbench() {
     typedWorkspacePath = Form.useWatch("workspace_path", form),
     processingMode = Form.useWatch("mode", form),
     formCategory = Form.useWatch("category_id", form),
-    scopeMode = Form.useWatch("scope_mode", form);
+    formTagIds = Form.useWatch("tag_ids", form),
+    formWorkspaceId = Form.useWatch("workspace_id", form);
   const joiningShared =
     !typedWorkspacePath?.trim() &&
     data?.workspaces?.find((w) =>
@@ -351,14 +352,6 @@ function Workbench() {
             ...row,
             domains_text: (row.domains || []).join(", "),
             keywords_text: (row.keywords || []).join(", "),
-            source_ids:
-              kind === "subscription" ? subscriptionSourceIds(row) : undefined,
-            scope_mode:
-              kind === "subscription"
-                ? row.category_id
-                  ? "category"
-                  : "sources"
-                : undefined,
           }
         : {
             type: kind === "bot" ? "weixin" : "rss",
@@ -370,12 +363,7 @@ function Workbench() {
             update_on_change: true,
             allow_undated: false,
             mode: "agent",
-            source_ids: [],
             tag_ids: [],
-            scope_mode:
-              kind === "subscription" && data?.categories?.length
-                ? "category"
-                : "sources",
             config: {},
           },
     );
@@ -409,6 +397,19 @@ function Workbench() {
     taxonomyTags
       .filter((t) => t.category_id === categoryId)
       .map((t) => ({ label: t.name, value: t.id }));
+  const subscriptionTagOptions = (categoryId) =>
+    taxonomyTags
+      .filter((t) => t.category_id === categoryId)
+      .map((t) => ({
+        label: `${t.name} · ${sources.filter((s) => (s.tag_ids || []).includes(t.id)).length} 个来源`,
+        value: t.id,
+      }));
+  const matchingSources = sources.filter(
+    (s) =>
+      s.category_id === formCategory &&
+      (formTagIds || []).some((id) => (s.tag_ids || []).includes(id)),
+  );
+  const receivingBots = bots.filter((b) => b.workspace_id === formWorkspaceId);
   const workspaceName = (id) =>
       workspaces.find((w) => w.id === id)?.name || "待绑定",
     modelName = (id) => models.find((m) => m.id === id)?.name || "默认模型",
@@ -710,10 +711,9 @@ function Workbench() {
             ...dialog.row,
             ...v,
             source_id: undefined,
-            category_id: v.scope_mode === "category" ? v.category_id : null,
-            tag_ids: v.scope_mode === "category" ? v.tag_ids || [] : [],
-            source_ids: v.scope_mode === "category" ? [] : v.source_ids,
-            scope_mode: undefined,
+            category_id: v.category_id,
+            tag_ids: v.tag_ids,
+            source_ids: [],
             model_id: v.mode === "agent" ? v.model_id || null : null,
             instructions: v.mode === "agent" ? v.instructions || "" : "",
             keywords: v.keywords_text
@@ -1171,7 +1171,7 @@ function Workbench() {
               pagination={{ pageSize: 12, showSizeChanger: false }}
               columns={[
                 {
-                  title: "来源",
+                  title: "订阅范围",
                   render: (_, s) => (
                     <div>
                       <b>{s.name}</b>
@@ -1326,7 +1326,7 @@ function Workbench() {
                         <span>
                           {s.category_id
                             ? `${categoryName(s.category_id)}${s.tag_ids?.length ? " · " + s.tag_ids.map((id) => taxonomyTags.find((t) => t.id === id)?.name || id).join("、") : " · 全部标签"}：`
-                            : ""}
+                            : "历史指定来源："}
                           {names.slice(0, 2).join("、")}
                           {names.length > 2 ? ` 等 ${names.length} 个` : ""}
                           {!names.length ? "暂无匹配来源" : ""}
@@ -2035,97 +2035,70 @@ function Workbench() {
                 name="workspace_id"
                 label="本地工作区"
                 rules={[{ required: true }]}
+                extra={
+                  formWorkspaceId
+                    ? receivingBots.length
+                      ? `接收机器人：${receivingBots.map((b) => b.name).join("、")}`
+                      : "未绑定机器人，当前不会投递"
+                    : undefined
+                }
               >
                 <Select options={workspaceOptions} />
               </Form.Item>
-              <Form.Item name="scope_mode" label="订阅范围">
-                <Select
-                  options={[
-                    {
-                      value: "category",
-                      label: "按分类 / 标签持续订阅",
-                      disabled: !categories.length,
-                    },
-                    { value: "sources", label: "指定来源" },
-                  ]}
-                  onChange={() =>
-                    form.setFieldsValue({
-                      category_id: null,
-                      tag_ids: [],
-                      source_ids: [],
-                    })
-                  }
+              {dialog.row && !dialog.row.category_id && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="此订阅仍使用历史指定来源；保存时需重新选择分类和标签。"
+                  style={{ marginBottom: 18 }}
                 />
-              </Form.Item>
+              )}
               {!categories.length && (
                 <Alert
                   type="info"
                   showIcon
-                  message="当前没有分类。可先在订阅源页创建分类，或从订阅广场导入。"
+                  message="当前没有已分类的来源，请先在订阅源页归类或从订阅广场导入。"
                   style={{ marginBottom: 18 }}
                 />
               )}
-              {scopeMode === "category" ? (
-                <>
-                  <Form.Item
-                    name="category_id"
-                    label="分类"
-                    rules={[{ required: true, message: "请选择分类" }]}
-                    extra="匹配此分类下的来源，后续新增来源也自动纳入。"
-                  >
-                    <Select
-                      options={categories.map((c) => ({
-                        label: c.name,
-                        value: c.id,
-                      }))}
-                      onChange={() => form.setFieldValue("tag_ids", [])}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    name="tag_ids"
-                    label="关注标签"
-                    extra="可多选；不选表示整个分类。来源命中任一所选标签即可。"
-                  >
-                    <Select
-                      mode="multiple"
-                      maxTagCount="responsive"
-                      disabled={!formCategory}
-                      options={tagOptions(formCategory)}
-                    />
-                  </Form.Item>
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="订阅随分类和标签动态匹配，新增来源不会推送已有历史条目。"
-                    style={{ marginBottom: 18 }}
-                  />
-                </>
-              ) : (
-                <Form.Item
-                  name="source_ids"
-                  label="订阅源"
-                  extra="可多选，使用同一处理规则；不同规则可创建多条订阅。"
-                  rules={[
-                    {
-                      required: true,
-                      type: "array",
-                      min: 1,
-                      message: "请至少选择一个订阅源",
-                    },
-                  ]}
-                >
-                  <Select
-                    mode="multiple"
-                    maxTagCount="responsive"
-                    placeholder="选择一个或多个订阅源"
-                    showSearch
-                    optionFilterProp="label"
-                    options={sources.map((s) => ({
-                      label: s.name,
-                      value: s.id,
-                    }))}
-                  />
-                </Form.Item>
+              <Form.Item
+                name="category_id"
+                label="分类"
+                rules={[{ required: true, message: "请选择分类" }]}
+              >
+                <Select
+                  placeholder="选择大类"
+                  options={categories.map((c) => ({
+                    label: c.name,
+                    value: c.id,
+                  }))}
+                  onChange={() => form.setFieldValue("tag_ids", [])}
+                />
+              </Form.Item>
+              <Form.Item
+                name="tag_ids"
+                label="标签（多选）"
+                rules={[
+                  { required: true, type: "array", min: 1, message: "请至少选择一个标签" },
+                ]}
+              >
+                <Select
+                  mode="multiple"
+                  maxTagCount="responsive"
+                  disabled={!formCategory}
+                  placeholder="选择该分类下的标签"
+                  optionFilterProp="label"
+                  options={subscriptionTagOptions(formCategory)}
+                />
+              </Form.Item>
+              {!!formTagIds?.length && (
+                <Alert
+                  type={matchingSources.some((s) => s.enabled) ? "info" : "warning"}
+                  showIcon
+                  message={`匹配 ${matchingSources.length} 个来源，其中 ${matchingSources.filter((s) => s.enabled).length} 个已启用`}
+                  description={matchingSources.slice(0, 5).map((s) => s.name).join("、")}
+                  style={{ marginBottom: 18 }}
+                />
               )}
               <Form.Item name="mode" label="处理方式">
                 <Select
@@ -2168,7 +2141,7 @@ function Workbench() {
                 <Alert
                   type="info"
                   showIcon
-                  message="AI 的关注范围、整理要求和输出模板在工作区中统一配置。这里选择订阅源，并按需增加筛选或补充要求。"
+                  message="AI 的关注范围、整理要求和输出模板在工作区中统一配置；订阅按所选分类与标签匹配来源。"
                   style={{ marginBottom: 18 }}
                 />
               )}

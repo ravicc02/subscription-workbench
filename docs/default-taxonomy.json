@@ -1,0 +1,71 @@
+{
+  "categories": [
+    {
+      "key": "finance",
+      "name": "金融市场",
+      "tags": [
+        { "key": "gold", "name": "黄金" },
+        { "key": "silver", "name": "白银" },
+        { "key": "energy", "name": "原油与能源" },
+        { "key": "forex", "name": "外汇" },
+        { "key": "central-banks", "name": "央行政策" },
+        { "key": "markets", "name": "市场与宏观" }
+      ]
+    },
+    {
+      "key": "world-affairs",
+      "name": "国际时政",
+      "tags": [
+        { "key": "world-news", "name": "国际动态" },
+        { "key": "politics", "name": "政策与选举" },
+        { "key": "geopolitics", "name": "地缘局势" },
+        { "key": "defense", "name": "防务" },
+        { "key": "asia", "name": "亚洲" },
+        { "key": "africa", "name": "非洲" },
+        { "key": "middle-east", "name": "中东" }
+      ]
+    }
+  ],
+  "sources": {
+    "fed": { "category": "finance", "tags": ["central-banks"] },
+    "ecb": { "category": "finance", "tags": ["central-banks"] },
+    "eia": { "category": "finance", "tags": ["energy"] },
+    "investinglive_news": { "category": "finance", "tags": ["markets"] },
+    "investinglive_technical": { "category": "finance", "tags": ["forex", "markets"] },
+    "investinglive_centralbank": { "category": "finance", "tags": ["central-banks", "forex"] },
+    "oilprice": { "category": "finance", "tags": ["energy"] },
+    "marketpulse": { "category": "finance", "tags": ["markets", "forex"] },
+    "fxempire_forecasts": { "category": "finance", "tags": ["markets", "forex"] },
+    "exchangerates": { "category": "finance", "tags": ["forex"] },
+    "goldseek": { "category": "finance", "tags": ["gold"] },
+    "silverseek": { "category": "finance", "tags": ["silver"] },
+    "bbc_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "bbc_2": { "category": "world-affairs", "tags": ["politics"] },
+    "bbc_3": { "category": "finance", "tags": ["markets"] },
+    "bbc_4": { "category": "world-affairs", "tags": ["middle-east", "geopolitics"] },
+    "france24_2": { "category": "world-affairs", "tags": ["world-news"] },
+    "france24_3": { "category": "world-affairs", "tags": ["middle-east", "geopolitics"] },
+    "france24_4": { "category": "world-affairs", "tags": ["world-news", "asia"] },
+    "france24_5": { "category": "world-affairs", "tags": ["world-news", "africa"] },
+    "france24_6": { "category": "world-affairs", "tags": ["world-news"] },
+    "rfi_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "rfi_2": { "category": "world-affairs", "tags": ["world-news", "africa"] },
+    "npr_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "npr_2": { "category": "world-affairs", "tags": ["politics"] },
+    "aljazeera_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "un_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "un_2": { "category": "world-affairs", "tags": ["world-news"] },
+    "rte_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "rte_2": { "category": "world-affairs", "tags": ["politics"] },
+    "euronews_1": { "category": "world-affairs", "tags": ["world-news"] },
+    "euronews_2": { "category": "world-affairs", "tags": ["world-news"] },
+    "breakingdefense_1": { "category": "world-affairs", "tags": ["defense", "geopolitics"] },
+    "defensenews_1": { "category": "world-affairs", "tags": ["defense", "geopolitics"] },
+    "kyivindependent_1": { "category": "world-affairs", "tags": ["geopolitics", "world-news"] },
+    "moscowtimes_1": { "category": "world-affairs", "tags": ["geopolitics", "world-news"] },
+    "yonhap_1": { "category": "world-affairs", "tags": ["world-news", "asia"] },
+    "rthk_1": { "category": "world-affairs", "tags": ["world-news", "asia"] },
+    "rthk_2": { "category": "world-affairs", "tags": ["world-news", "asia"] },
+    "rthk_3": { "category": "world-affairs", "tags": ["world-news", "asia"] }
+  }
+}

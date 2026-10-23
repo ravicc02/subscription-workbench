@@ -234,17 +234,30 @@ try:
             data={"name": "UI Extra Events", "type": "webhook", "poll_minutes": 15},
         )
         assert extra_response.ok
+        extra = extra_response.json()
+        category = page.request.post(
+            "http://127.0.0.1:6191/api/categories",
+            headers={"X-Requested-With": "workbench"},
+            data={"key": "release-events", "name": "版本事件"},
+        ).json()
+        tags = []
+        for key, name in (("release", "版本发布"), ("extra", "扩展事件")):
+            response = page.request.post(
+                "http://127.0.0.1:6191/api/tags",
+                headers={"X-Requested-With": "workbench"},
+                data={"category_id": category["id"], "key": key, "name": name},
+            )
+            assert response.ok, response.text()
+            tags.append(response.json())
+        for item, tag in zip((src, extra), tags):
+            response = page.request.post(
+                "http://127.0.0.1:6191/api/sources",
+                headers={"X-Requested-With": "workbench"},
+                data={**item, "category_id": category["id"], "tag_ids": [tag["id"]]},
+            )
+            assert response.ok, response.text()
 
         nav("订阅")
-        page.get_by_role("button", name="新增订阅", exact=True).click()
-        page.get_by_label("订阅名称", exact=True).fill("UI Delivery Flow")
-        page.get_by_label("本地工作区", exact=True).press("ArrowDown")
-        page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter(
-            has_text="shared"
-        ).first.click()
-        # Refresh to make the second source available in the subscription selector.
-        page.get_by_role("dialog").get_by_role("button", name="取消", exact=True).click()
-        expect(page.get_by_role("dialog")).to_have_count(0)
         page.get_by_role("button", name="刷新", exact=True).click()
         page.get_by_text("刷新工作台完成", exact=True).wait_for()
         page.get_by_role("button", name="新增订阅", exact=True).click()
@@ -253,8 +266,14 @@ try:
         page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter(
             has_text="shared"
         ).first.click()
-        multiselect("订阅源", "UI Release Events")
-        multiselect("订阅源", "UI Extra Events")
+        expect(page.get_by_text("接收机器人：", exact=False)).to_be_visible()
+        expect(page.get_by_role("dialog").get_by_label("订阅源", exact=True)).to_have_count(0)
+        select("分类", "版本事件")
+        multiselect("标签（多选）", "版本发布 · 1 个来源")
+        multiselect("标签（多选）", "扩展事件 · 1 个来源")
+        expect(page.get_by_text("匹配 2 个来源，其中 2 个已启用")).to_be_visible()
+        page.screenshot(path=str(out / "subscription-scope.png"), full_page=True)
+        results["category_and_multi_tag_selection"] = True
         expect(page.get_by_text("Agent 整理 · 调用模型", exact=True)).to_be_visible()
         results["processing_modes_explained"] = True
         select("处理方式", "直接转发 · 不调用模型")
@@ -269,7 +288,10 @@ try:
             for s in page.request.get("http://127.0.0.1:6191/api/overview").json()["subscriptions"]
             if s["name"] == "UI Delivery Flow"
         )
-        assert len(grouped["source_ids"]) == 2
+        assert grouped["source_ids"] == []
+        assert grouped["category_id"] == category["id"]
+        assert set(grouped["tag_ids"]) == {tag["id"] for tag in tags}
+        assert len(grouped["resolved_source_ids"]) == 2
         results["multi_source_subscription"] = True
         r = page.request.post(
             "http://127.0.0.1:6191/api/hooks/" + src["id"],

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1989,3 +1990,115 @@ def test_undated_rss_requires_explicit_opt_in_after_baseline(wb, server):
     assert w.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
     captured = asyncio.run(w.sources.capture(row, source))
     assert captured["content_level"] == "summary_only"
+
+
+def test_bundled_sources_get_idempotent_default_taxonomy(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for name in ("imported-sources.json", "default-taxonomy.json"):
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "docs" / name, docs / name)
+    w = Workbench(tmp_path, network=Network(["127.0.0.1"]))
+    sources = w.store.all("source")
+    categories = {c["key"]: c for c in w.store.all("category")}
+    tags = {(t["category_id"], t["key"]): t for t in w.store.all("tag")}
+    assert len(sources) == 40
+    assert all(s.get("category_id") and s.get("tag_ids") for s in sources)
+    assert len([s for s in sources if s["category_id"] == categories["finance"]["id"]]) == 13
+    gold = tags[(categories["finance"]["id"], "gold")]
+    assert gold["id"] in w.store.get("source", "source-goldseek")["tag_ids"]
+    revision = w.store.get("source", "source-goldseek")["revision"]
+    w.store.db.close()
+    restarted = Workbench(tmp_path, network=Network(["127.0.0.1"]))
+    assert restarted.store.get("source", "source-goldseek")["revision"] == revision
+    assert len(restarted.store.all("category")) == 2
+    restarted.store.db.close()
+
+
+def test_default_taxonomy_does_not_reassign_custom_source(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for name in ("imported-sources.json", "default-taxonomy.json"):
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "docs" / name, docs / name)
+    store = Store(tmp_path)
+    store.set_setting("source_imported", True)
+    custom = store.put("category", {"key": "custom", "name": "Custom"})
+    feed = json.loads((docs / "imported-sources.json").read_text(encoding="utf-8"))["feeds"][0]
+    original = store.put(
+        "source",
+        {
+            "id": "source-fed",
+            "name": "Edited",
+            "url": feed["url"],
+            "type": "rss",
+            "category_id": custom["id"],
+            "tag_ids": [],
+            "enabled": False,
+        },
+    )
+    store.db.close()
+    w = Workbench(tmp_path, network=Network(["127.0.0.1"]))
+    saved = w.store.get("source", "source-fed")
+    assert saved["category_id"] == custom["id"]
+    assert saved["revision"] == original["revision"]
+    assert saved["name"] == "Edited" and saved["enabled"] is False
+    w.store.db.close()
+
+
+def test_multiple_tags_collect_multiple_links_for_shared_bots(wb, server):
+    c, w = wb
+    first_bot = bot(c, server)
+    second_bot = bot(c, server)
+    assert first_bot["workspace_id"] == second_bot["workspace_id"]
+    category = post(c, "categories", {"key": "finance", "name": "金融"})
+    gold = post(c, "tags", {"category_id": category["id"], "key": "gold", "name": "黄金"})
+    silver = post(c, "tags", {"category_id": category["id"], "key": "silver", "name": "白银"})
+    a = post(
+        c,
+        "sources",
+        {"name": "Gold", "type": "webhook", "category_id": category["id"], "tag_ids": [gold["id"]]},
+    )
+    b = post(
+        c,
+        "sources",
+        {
+            "name": "Silver",
+            "type": "webhook",
+            "category_id": category["id"],
+            "tag_ids": [silver["id"]],
+        },
+    )
+    subscription = post(
+        c,
+        "subscriptions",
+        {
+            "name": "Metals",
+            "workspace_id": first_bot["workspace_id"],
+            "category_id": category["id"],
+            "tag_ids": [gold["id"], silver["id"]],
+            "source_ids": [],
+            "mode": "forward",
+        },
+    )
+    both = post(
+        c,
+        "sources",
+        {
+            "name": "Both",
+            "type": "webhook",
+            "category_id": category["id"],
+            "tag_ids": [gold["id"], silver["id"]],
+        },
+    )
+    assert set(c.get("/api/overview").json()["subscriptions"][0]["resolved_source_ids"]) == {
+        a["id"],
+        b["id"],
+        both["id"],
+    }
+    assert subscription["source_ids"] == []
+    hook(c, both, "overlapping-tags")
+    assert w.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert w.store.db.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0] == 2
+    assert asyncio.run(w.process_one())
+    assert asyncio.run(w.deliver_one())
+    assert asyncio.run(w.deliver_one())
+    assert len(Handler.receipts) == 2

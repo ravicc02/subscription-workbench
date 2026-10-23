@@ -15,6 +15,7 @@ from .catalog import Catalog
 from .channels import CATALOG, Channels, ContextRequired, PlatformRejected
 from .collection_settings import CollectionSettings
 from .core import Conflict, Store, Workspaces, digest, dumps, uid
+from .default_taxonomy import apply_default_taxonomy
 from .management import Management
 from .network import Network, RemoteError
 from .polling import DeferredRequest, RequestPolicy, retry_after
@@ -43,6 +44,7 @@ class Workbench(Catalog, Management, CollectionSettings):
         self.qr_locks = {}
         self.running = True
         self.import_sources()
+        apply_default_taxonomy(self)
 
     def import_sources(self):
         if self.store.setting("source_imported"):
