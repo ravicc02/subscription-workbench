@@ -1,0 +1,45 @@
+{
+  "format": "subscription-workbench/package",
+  "version": 1,
+  "package": {
+    "key": "github-hot",
+    "name": "GitHub Hot",
+    "description": "GitHub 每日趋势页与社区维护的语言热榜聚合源；后者无发布时间，只推送建立基线后的新条目。"
+  },
+  "categories": [
+    {
+      "key": "github-hot",
+      "name": "GitHub Hot",
+      "tags": [
+        { "key": "all", "name": "全站趋势" },
+        { "key": "python", "name": "Python" },
+        { "key": "javascript", "name": "JavaScript" }
+      ],
+      "sources": [
+        {
+          "name": "GitHub Trending daily", "type": "webpage",
+          "url": "https://github.com/trending?since=daily", "selector": "main .Box",
+          "tags": ["all"], "poll_minutes": 30, "proxy_mode": "inherit"
+        },
+        {
+          "name": "Trending RSS all", "type": "rss",
+          "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+          "tags": ["all"], "poll_minutes": 30, "proxy_mode": "inherit",
+          "allow_undated": true, "capture_mode": "summary", "update_on_change": false
+        },
+        {
+          "name": "Trending RSS Python", "type": "rss",
+          "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml",
+          "tags": ["python"], "poll_minutes": 30, "proxy_mode": "inherit",
+          "allow_undated": true, "capture_mode": "summary", "update_on_change": false
+        },
+        {
+          "name": "Trending RSS JavaScript", "type": "rss",
+          "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/javascript.xml",
+          "tags": ["javascript"], "poll_minutes": 30, "proxy_mode": "inherit",
+          "allow_undated": true, "capture_mode": "summary", "update_on_change": false
+        }
+      ]
+    }
+  ]
+}

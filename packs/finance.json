@@ -1,0 +1,50 @@
+{
+  "format": "subscription-workbench/package",
+  "version": 1,
+  "package": {
+    "key": "finance",
+    "name": "金融市场",
+    "description": "贵金属、能源、外汇与主要央行动态。导入只同步来源，需自行选择工作区和标签建立订阅。"
+  },
+  "categories": [
+    {
+      "key": "finance",
+      "name": "金融",
+      "tags": [
+        { "key": "gold", "name": "黄金" },
+        { "key": "silver", "name": "白银" },
+        { "key": "energy", "name": "原油与能源" },
+        { "key": "forex", "name": "外汇" },
+        { "key": "central-banks", "name": "央行政策" }
+      ],
+      "sources": [
+        {
+          "name": "GoldSeek", "type": "rss", "url": "https://www.goldseek.com/rss.xml",
+          "tags": ["gold"], "poll_minutes": 15, "proxy_mode": "inherit",
+          "domains": ["goldseek.com", "www.goldseek.com"]
+        },
+        {
+          "name": "SilverSeek", "type": "rss", "url": "https://www.silverseek.com/rss.xml",
+          "tags": ["silver"], "poll_minutes": 15, "proxy_mode": "inherit",
+          "domains": ["silverseek.com", "www.silverseek.com"]
+        },
+        {
+          "name": "OilPrice", "type": "rss", "url": "https://oilprice.com/rss/main",
+          "tags": ["energy"], "poll_minutes": 15, "proxy_mode": "inherit"
+        },
+        {
+          "name": "EIA Today in Energy", "type": "rss", "url": "https://www.eia.gov/rss/todayinenergy.xml",
+          "tags": ["energy"], "poll_minutes": 30, "proxy_mode": "inherit"
+        },
+        {
+          "name": "investingLive News", "type": "rss", "url": "https://investinglive.com/feed/news/",
+          "tags": ["forex", "central-banks"], "poll_minutes": 10, "proxy_mode": "inherit"
+        },
+        {
+          "name": "Federal Reserve Monetary Policy", "type": "rss", "url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+          "tags": ["central-banks"], "poll_minutes": 30, "proxy_mode": "inherit"
+        }
+      ]
+    }
+  ]
+}

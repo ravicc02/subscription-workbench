@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+.env
+.env.*
+state/
+workspaces/
+logs/
+runs/
+dist/
+web/node_modules/
+web/dist/
+*.sqlite3*
+*.zip

@@ -1,0 +1,43 @@
+{
+  "format": "subscription-workbench/package",
+  "version": 1,
+  "package": {
+    "key": "technology",
+    "name": "科技动态",
+    "description": "科技媒体与公开技术社区数据，混合 RSS 和 JSON API。"
+  },
+  "categories": [
+    {
+      "key": "technology",
+      "name": "科技",
+      "tags": [
+        { "key": "industry", "name": "产业动态" },
+        { "key": "engineering", "name": "工程技术" },
+        { "key": "community", "name": "社区热点" }
+      ],
+      "sources": [
+        {
+          "name": "Ars Technica", "type": "rss", "url": "https://feeds.arstechnica.com/arstechnica/index",
+          "tags": ["industry", "engineering"], "poll_minutes": 15, "proxy_mode": "inherit",
+          "domains": ["arstechnica.com", "www.arstechnica.com"]
+        },
+        {
+          "name": "TechCrunch", "type": "rss", "url": "https://techcrunch.com/feed/",
+          "tags": ["industry"], "poll_minutes": 15, "proxy_mode": "inherit"
+        },
+        {
+          "name": "Hacker News front page", "type": "rss", "url": "https://hnrss.org/frontpage",
+          "tags": ["community", "engineering"], "poll_minutes": 15, "proxy_mode": "inherit",
+          "capture_mode": "summary", "domains": ["hnrss.org"], "update_on_change": false
+        },
+        {
+          "name": "Hacker News front-page API", "type": "api",
+          "url": "https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=20",
+          "tags": ["community"], "poll_minutes": 30, "proxy_mode": "inherit",
+          "json_path": "hits", "id_field": "objectID", "title_field": "title",
+          "url_field": "url", "published_field": "created_at", "update_on_change": false
+        }
+      ]
+    }
+  ]
+}

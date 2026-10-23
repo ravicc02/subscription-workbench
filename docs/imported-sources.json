@@ -1,0 +1,1043 @@
+{
+  "feeds": [
+    {
+      "id": "fed",
+      "name": "美联储",
+      "url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+      "domains": [
+        "www.federalreserve.gov"
+      ],
+      "selectors": [
+        "#article"
+      ],
+      "poll_class": "official",
+      "poll_minutes": 30,
+      "poll_offset": 7,
+      "poll_second": 17
+    },
+    {
+      "id": "ecb",
+      "name": "欧洲央行",
+      "url": "https://www.ecb.europa.eu/rss/press.html",
+      "domains": [
+        "www.ecb.europa.eu"
+      ],
+      "selectors": [
+        "main"
+      ],
+      "poll_class": "official",
+      "poll_minutes": 30,
+      "poll_offset": 13,
+      "poll_second": 29
+    },
+    {
+      "id": "eia",
+      "name": "EIA",
+      "url": "https://www.eia.gov/rss/todayinenergy.xml",
+      "domains": [
+        "www.eia.gov"
+      ],
+      "selectors": [
+        ".tie-article"
+      ],
+      "poll_class": "official",
+      "poll_minutes": 60,
+      "poll_offset": 41,
+      "poll_second": 11
+    },
+    {
+      "id": "investinglive_news",
+      "name": "investingLive News",
+      "url": "https://investinglive.com/feed/news/",
+      "domains": [
+        "investinglive.com",
+        "www.investinglive.com"
+      ],
+      "selectors": [
+        ".article-body-normal"
+      ],
+      "min_paragraph_characters": 20,
+      "min_body_paragraphs": 1,
+      "min_body_characters": 120,
+      "poll_class": "fast_news",
+      "poll_minutes": 5,
+      "poll_offset": 0,
+      "poll_second": 5
+    },
+    {
+      "id": "investinglive_technical",
+      "name": "investingLive Technical Analysis",
+      "url": "https://investinglive.com/feed/technicalanalysis/",
+      "domains": [
+        "investinglive.com",
+        "www.investinglive.com"
+      ],
+      "selectors": [
+        ".article-body-normal"
+      ],
+      "min_paragraph_characters": 20,
+      "min_body_paragraphs": 1,
+      "min_body_characters": 120,
+      "poll_class": "market_news",
+      "poll_minutes": 10,
+      "poll_offset": 1,
+      "poll_second": 15
+    },
+    {
+      "id": "investinglive_centralbank",
+      "name": "investingLive Central Banks",
+      "url": "https://investinglive.com/feed/centralbank/",
+      "domains": [
+        "investinglive.com",
+        "www.investinglive.com"
+      ],
+      "selectors": [
+        ".article-body-normal"
+      ],
+      "min_paragraph_characters": 20,
+      "min_body_paragraphs": 1,
+      "min_body_characters": 120,
+      "default_categories": [
+        "外汇货币对直盘"
+      ],
+      "poll_class": "analysis",
+      "poll_minutes": 15,
+      "poll_offset": 2,
+      "poll_second": 25
+    },
+    {
+      "id": "oilprice",
+      "name": "OilPrice",
+      "url": "https://oilprice.com/rss/main",
+      "domains": [
+        "oilprice.com",
+        "www.oilprice.com"
+      ],
+      "selectors": [
+        "#article-content"
+      ],
+      "poll_class": "market_news",
+      "poll_minutes": 10,
+      "poll_offset": 3,
+      "poll_second": 35
+    },
+    {
+      "id": "marketpulse",
+      "name": "MarketPulse",
+      "url": "https://www.marketpulse.com/feed/",
+      "domains": [
+        "www.marketpulse.com",
+        "marketpulse.com"
+      ],
+      "selectors": [
+        ".post-body"
+      ],
+      "poll_class": "market_news",
+      "poll_minutes": 10,
+      "poll_offset": 4,
+      "poll_second": 45
+    },
+    {
+      "id": "fxempire_forecasts",
+      "name": "FXEmpire Forecasts",
+      "url": "https://www.fxempire.com/api/v1/en/articles/rss/forecasts",
+      "domains": [
+        "www.fxempire.com",
+        "fxempire.com"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "poll_class": "analysis",
+      "poll_minutes": 15,
+      "poll_offset": 6,
+      "poll_second": 10
+    },
+    {
+      "id": "exchangerates",
+      "name": "ExchangeRates Currency News",
+      "url": "https://www.exchangerates.org.uk/news/rss.xml",
+      "domains": [
+        "www.exchangerates.org.uk",
+        "exchangerates.org.uk"
+      ],
+      "selectors": [
+        ".erukNewsBody"
+      ],
+      "poll_class": "analysis",
+      "poll_minutes": 15,
+      "poll_offset": 8,
+      "poll_second": 20
+    },
+    {
+      "id": "goldseek",
+      "name": "GoldSeek",
+      "url": "https://www.goldseek.com/rss.xml",
+      "domains": [
+        "goldseek.com",
+        "www.goldseek.com"
+      ],
+      "selectors": [
+        ".article-text .text-long"
+      ],
+      "poll_class": "research",
+      "poll_minutes": 30,
+      "poll_offset": 19,
+      "poll_second": 30
+    },
+    {
+      "id": "silverseek",
+      "name": "SilverSeek",
+      "url": "https://www.silverseek.com/rss.xml",
+      "domains": [
+        "silverseek.com",
+        "www.silverseek.com"
+      ],
+      "selectors": [
+        ".article-text .text-long"
+      ],
+      "include_tables": true,
+      "min_paragraph_characters": 1,
+      "min_body_paragraphs": 3,
+      "min_body_characters": 200,
+      "poll_class": "research",
+      "poll_minutes": 30,
+      "poll_offset": 23,
+      "poll_second": 40
+    },
+    {
+      "id": "bbc_1",
+      "name": "BBC World",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "domains": [
+        "feeds.bbci.co.uk",
+        "www.bbc.co.uk",
+        "bbc.co.uk"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 0,
+      "poll_second": 7
+    },
+    {
+      "id": "bbc_2",
+      "name": "BBC Politics",
+      "url": "https://feeds.bbci.co.uk/news/politics/rss.xml",
+      "domains": [
+        "feeds.bbci.co.uk",
+        "www.bbc.co.uk",
+        "bbc.co.uk"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "政策与选举"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 2,
+      "poll_second": 17
+    },
+    {
+      "id": "bbc_3",
+      "name": "BBC Business",
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml",
+      "domains": [
+        "feeds.bbci.co.uk",
+        "www.bbc.co.uk",
+        "bbc.co.uk"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 4,
+      "poll_second": 27
+    },
+    {
+      "id": "bbc_4",
+      "name": "BBC Middle East",
+      "url": "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",
+      "domains": [
+        "feeds.bbci.co.uk",
+        "www.bbc.co.uk",
+        "bbc.co.uk"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 6,
+      "poll_second": 37
+    },
+    {
+      "id": "france24_2",
+      "name": "France24 Europe",
+      "url": "https://www.france24.com/en/europe/rss",
+      "domains": [
+        "www.france24.com",
+        "france24.com"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 5,
+      "poll_second": 12
+    },
+    {
+      "id": "france24_3",
+      "name": "France24 Middle East",
+      "url": "https://www.france24.com/en/middle-east/rss",
+      "domains": [
+        "www.france24.com",
+        "france24.com"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 7,
+      "poll_second": 22
+    },
+    {
+      "id": "france24_4",
+      "name": "France24 Asia Pacific",
+      "url": "https://www.france24.com/en/asia-pacific/rss",
+      "domains": [
+        "www.france24.com",
+        "france24.com"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 9,
+      "poll_second": 32
+    },
+    {
+      "id": "france24_5",
+      "name": "France24 Africa",
+      "url": "https://www.france24.com/en/africa/rss",
+      "domains": [
+        "www.france24.com",
+        "france24.com"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 11,
+      "poll_second": 42
+    },
+    {
+      "id": "france24_6",
+      "name": "France24 Americas",
+      "url": "https://www.france24.com/en/americas/rss",
+      "domains": [
+        "www.france24.com",
+        "france24.com"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 13,
+      "poll_second": 52
+    },
+    {
+      "id": "rfi_1",
+      "name": "RFI All",
+      "url": "https://www.rfi.fr/en/rss",
+      "domains": [
+        "www.rfi.fr",
+        "rfi.fr"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 1,
+      "poll_second": 15
+    },
+    {
+      "id": "rfi_2",
+      "name": "RFI Africa",
+      "url": "https://www.rfi.fr/en/africa/rss",
+      "domains": [
+        "www.rfi.fr",
+        "rfi.fr"
+      ],
+      "selectors": [
+        ".t-content__body"
+      ],
+      "exclude_url_patterns": [
+        "/video/",
+        "/tv-shows/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 3,
+      "poll_second": 45
+    },
+    {
+      "id": "npr_1",
+      "name": "NPR World",
+      "url": "https://feeds.npr.org/1004/rss.xml",
+      "domains": [
+        "feeds.npr.org",
+        "www.npr.org",
+        "npr.org"
+      ],
+      "selectors": [
+        "#storytext"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 2,
+      "poll_second": 20
+    },
+    {
+      "id": "npr_2",
+      "name": "NPR Politics",
+      "url": "https://feeds.npr.org/1014/rss.xml",
+      "domains": [
+        "feeds.npr.org",
+        "www.npr.org",
+        "npr.org"
+      ],
+      "selectors": [
+        "#storytext"
+      ],
+      "default_categories": [
+        "政策与选举"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 4,
+      "poll_second": 50
+    },
+    {
+      "id": "aljazeera_1",
+      "name": "Al Jazeera All",
+      "url": "https://www.aljazeera.com/xml/rss/all.xml",
+      "domains": [
+        "www.aljazeera.com",
+        "aljazeera.com"
+      ],
+      "selectors": [
+        ".wysiwyg"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 5,
+      "poll_second": 25
+    },
+    {
+      "id": "un_1",
+      "name": "UN News English",
+      "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml",
+      "domains": [
+        "news.un.org"
+      ],
+      "selectors": [
+        ".field--name-field-text-column"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 30,
+      "poll_offset": 9,
+      "poll_second": 33
+    },
+    {
+      "id": "un_2",
+      "name": "UN News Chinese",
+      "url": "https://news.un.org/feed/subscribe/zh/news/all/rss.xml",
+      "domains": [
+        "news.un.org"
+      ],
+      "selectors": [
+        ".field--name-field-text-column"
+      ],
+      "min_body_paragraphs": 2,
+      "min_body_characters": 300,
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 30,
+      "poll_offset": 21,
+      "poll_second": 43
+    },
+    {
+      "id": "rte_1",
+      "name": "RTE World",
+      "url": "https://www.rte.ie/feeds/rss/?index=/news/world/",
+      "domains": [
+        "www.rte.ie",
+        "rte.ie"
+      ],
+      "selectors": [
+        ".article-body"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 6,
+      "poll_second": 18
+    },
+    {
+      "id": "rte_2",
+      "name": "RTE Politics",
+      "url": "https://www.rte.ie/feeds/rss/?index=/news/politics/",
+      "domains": [
+        "www.rte.ie",
+        "rte.ie"
+      ],
+      "selectors": [
+        ".article-body"
+      ],
+      "default_categories": [
+        "政策与选举"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 8,
+      "poll_second": 48
+    },
+    {
+      "id": "euronews_1",
+      "name": "Euronews All",
+      "url": "https://www.euronews.com/rss",
+      "domains": [
+        "www.euronews.com",
+        "euronews.com"
+      ],
+      "selectors": [
+        ".c-article-content"
+      ],
+      "exclude_url_patterns": [
+        "/video/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 10,
+      "poll_second": 28
+    },
+    {
+      "id": "euronews_2",
+      "name": "Euronews News",
+      "url": "https://www.euronews.com/rss?level=theme&name=news",
+      "domains": [
+        "www.euronews.com",
+        "euronews.com"
+      ],
+      "selectors": [
+        ".c-article-content"
+      ],
+      "exclude_url_patterns": [
+        "/video/"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 12,
+      "poll_second": 58
+    },
+    {
+      "id": "breakingdefense_1",
+      "name": "Breaking Defense",
+      "url": "https://breakingdefense.com/feed/",
+      "domains": [
+        "breakingdefense.com",
+        "www.breakingdefense.com"
+      ],
+      "selectors": [
+        ".post-single__content"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 30,
+      "poll_offset": 15,
+      "poll_second": 30
+    },
+    {
+      "id": "defensenews_1",
+      "name": "Defense News",
+      "url": "https://www.defensenews.com/arc/outboundfeeds/rss/?outputType=xml",
+      "domains": [
+        "www.defensenews.com",
+        "defensenews.com"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 30,
+      "poll_offset": 25,
+      "poll_second": 20
+    },
+    {
+      "id": "kyivindependent_1",
+      "name": "Kyiv Independent",
+      "url": "https://kyivindependent.com/news-archive/rss/",
+      "domains": [
+        "kyivindependent.com",
+        "www.kyivindependent.com"
+      ],
+      "selectors": [
+        "article"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 7,
+      "poll_second": 40
+    },
+    {
+      "id": "moscowtimes_1",
+      "name": "The Moscow Times",
+      "url": "https://www.themoscowtimes.com/rss/news",
+      "domains": [
+        "www.themoscowtimes.com",
+        "themoscowtimes.com"
+      ],
+      "selectors": [
+        ".article__content"
+      ],
+      "default_categories": [
+        "地缘冲突"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 14,
+      "poll_second": 35
+    },
+    {
+      "id": "yonhap_1",
+      "name": "Yonhap All",
+      "url": "https://en.yna.co.kr/RSS/news.xml",
+      "domains": [
+        "en.yna.co.kr"
+      ],
+      "selectors": [
+        ".story-news"
+      ],
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 10,
+      "poll_offset": 8,
+      "poll_second": 50
+    },
+    {
+      "id": "rthk_1",
+      "name": "RTHK World English",
+      "url": "https://rthk9.rthk.hk/rthk/news/rss/e_expressnews_einternational.xml",
+      "domains": [
+        "rthk.hk",
+        "www.rthk.hk",
+        "rthk9.rthk.hk",
+        "news.rthk.hk"
+      ],
+      "selectors": [
+        ".itemFullText"
+      ],
+      "paragraph_mode": "br",
+      "min_paragraph_characters": 20,
+      "min_body_paragraphs": 2,
+      "min_body_characters": 200,
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 4,
+      "poll_second": 10
+    },
+    {
+      "id": "rthk_2",
+      "name": "RTHK World Chinese",
+      "url": "https://rthk9.rthk.hk/rthk/news/rss/c_expressnews_cinternational.xml",
+      "domains": [
+        "rthk.hk",
+        "www.rthk.hk",
+        "rthk9.rthk.hk",
+        "news.rthk.hk"
+      ],
+      "selectors": [
+        ".itemFullText"
+      ],
+      "paragraph_mode": "br",
+      "min_paragraph_characters": 10,
+      "min_body_paragraphs": 2,
+      "min_body_characters": 150,
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 9,
+      "poll_second": 40
+    },
+    {
+      "id": "rthk_3",
+      "name": "RTHK China Chinese",
+      "url": "https://rthk9.rthk.hk/rthk/news/rss/c_expressnews_greaterchina.xml",
+      "domains": [
+        "rthk.hk",
+        "www.rthk.hk",
+        "rthk9.rthk.hk",
+        "news.rthk.hk"
+      ],
+      "selectors": [
+        ".itemFullText"
+      ],
+      "paragraph_mode": "br",
+      "min_paragraph_characters": 10,
+      "min_body_paragraphs": 2,
+      "min_body_characters": 150,
+      "default_categories": [
+        "国际时政"
+      ],
+      "poll_class": "world_news",
+      "poll_minutes": 15,
+      "poll_offset": 13,
+      "poll_second": 55
+    }
+  ],
+  "keywords": {
+    "国际黄金": [
+      "gold",
+      "gold bullion",
+      "xau",
+      "黄金"
+    ],
+    "白银": [
+      "silver",
+      "xag",
+      "白银"
+    ],
+    "原油": [
+      "crude",
+      "brent",
+      "wti",
+      "opec",
+      "oil price",
+      "oil supply",
+      "oil demand",
+      "petroleum",
+      "oil production",
+      "oil inventories",
+      "原油",
+      "oil",
+      "energy inventories",
+      "refinery",
+      "hormuz"
+    ],
+    "外汇货币对直盘": [
+      "eur/usd",
+      "gbp/usd",
+      "aud/usd",
+      "nzd/usd",
+      "usd/jpy",
+      "usd/chf",
+      "usd/cad",
+      "dollar",
+      "forex",
+      "greenback",
+      "euro",
+      "sterling",
+      "yen",
+      "kiwi",
+      "aussie",
+      "swiss franc",
+      "canadian dollar",
+      "federal open market",
+      "fomc",
+      "monetary policy",
+      "discount rate",
+      "美元",
+      "外汇",
+      "fed",
+      "bank of japan",
+      "bank of england",
+      "rba",
+      "rbnz",
+      "ecb",
+      "boj",
+      "boe",
+      "boc",
+      "swiss",
+      "franc",
+      "pound",
+      "japanese yen",
+      "exchange rate",
+      "interest rate"
+    ],
+    "交叉盘": [
+      "eur/jpy",
+      "gbp/jpy",
+      "eur/gbp",
+      "eur/chf",
+      "eur/aud",
+      "eur/cad",
+      "eur/nzd",
+      "gbp/chf",
+      "gbp/aud",
+      "gbp/cad",
+      "gbp/nzd",
+      "aud/jpy",
+      "aud/chf",
+      "aud/cad",
+      "aud/nzd",
+      "nzd/jpy",
+      "nzd/chf",
+      "nzd/cad",
+      "cad/jpy",
+      "cad/chf",
+      "chf/jpy",
+      "cross currency",
+      "cross-currency",
+      "交叉盘"
+    ],
+    "国际时政": [
+      "diplomacy",
+      "diplomatic",
+      "foreign ministry",
+      "foreign minister",
+      "foreign affairs",
+      "summit",
+      "treaty",
+      "ambassador",
+      "sanctions",
+      "sanction",
+      "united nations",
+      "security council",
+      "g7",
+      "g20",
+      "brics",
+      "secretary of state",
+      "state visit",
+      "bilateral",
+      "delegation",
+      "president",
+      "prime minister",
+      "government",
+      "parliament",
+      "外交",
+      "大使",
+      "联合国",
+      "聯合國",
+      "制裁",
+      "峰会",
+      "峰會",
+      "条约",
+      "條約",
+      "总统",
+      "總統",
+      "总理",
+      "總理",
+      "政府",
+      "议会",
+      "議會"
+    ],
+    "地缘冲突": [
+      "war",
+      "warfare",
+      "conflict",
+      "military",
+      "troops",
+      "missile",
+      "missiles",
+      "airstrike",
+      "air strike",
+      "drone",
+      "ceasefire",
+      "invasion",
+      "occupation",
+      "offensive",
+      "artillery",
+      "nato",
+      "defense ministry",
+      "defence ministry",
+      "warplane",
+      "weapons",
+      "combat",
+      "insurgent",
+      "militant",
+      "rebels",
+      "frontline",
+      "mobilisation",
+      "mobilization",
+      "战争",
+      "戰爭",
+      "冲突",
+      "衝突",
+      "军事",
+      "軍事",
+      "部队",
+      "部隊",
+      "导弹",
+      "導彈",
+      "空袭",
+      "空襲",
+      "停火",
+      "入侵",
+      "攻势",
+      "攻勢",
+      "国防",
+      "國防",
+      "武器",
+      "军队",
+      "軍隊"
+    ],
+    "政策与选举": [
+      "election",
+      "elections",
+      "vote",
+      "votes",
+      "voting",
+      "referendum",
+      "ballot",
+      "coalition",
+      "cabinet",
+      "legislation",
+      "supreme court",
+      "constitution",
+      "protest",
+      "protests",
+      "strike action",
+      "resignation",
+      "impeachment",
+      "censure",
+      "policy",
+      "regulation",
+      "tariff",
+      "选举",
+      "選舉",
+      "投票",
+      "公投",
+      "国会",
+      "國會",
+      "法案",
+      "立法",
+      "政策",
+      "法院",
+      "最高法院",
+      "宪法",
+      "憲法",
+      "示威",
+      "抗议",
+      "抗議",
+      "罢工",
+      "罷工",
+      "辞职",
+      "辭職",
+      "弹劾",
+      "彈劾",
+      "内阁",
+      "內閣",
+      "关税",
+      "關稅"
+    ]
+  },
+  "polling": {
+    "jitter_seconds": 30,
+    "minimum_request_gap_seconds": 10,
+    "rate_limit_backoff_seconds": 1800,
+    "max_rate_limit_backoff_seconds": 21600,
+    "forbidden_cooldown_seconds": 21600,
+    "transient_backoff_seconds": 300,
+    "max_transient_backoff_seconds": 3600
+  }
+}
