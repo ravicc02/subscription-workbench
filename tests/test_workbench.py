@@ -1,6 +1,7 @@
 import asyncio
 import json
 import shutil
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from backend.app.api import create_app
 from backend.app.core import Store, Workspaces, dumps
 from backend.app.network import Network
+from backend.app.polling import DeferredRequest
 from backend.app.service import Workbench
 from backend.app.sources import feed_items
 from backend.app.subscriptions import resolved_source_ids
@@ -384,6 +386,80 @@ def test_persistent_429_cooldown(wb, server):
     assert r["deferred"] and r["retry_at"] > time.time() + 1700
     assert w.policy.available_at(s) > time.time()
     assert (w.root / "state/http-state.json").is_file()
+
+
+def test_capture_cooldown_retries_without_losing_delivery(wb, server, monkeypatch):
+    c, w = wb
+    b = bot(c, server)
+    s = source(c)
+    sub(c, b, s)
+    hook(c, s)
+    capture = w.sources.capture
+
+    async def cooled(*_):
+        raise DeferredRequest("Article site cooling down", time.time() + 60, 429)
+
+    monkeypatch.setattr(w.sources, "capture", cooled)
+    assert asyncio.run(w.process_one())
+    row = w.store.db.execute("SELECT * FROM jobs").fetchone()
+    assert row["state"] == "QUEUED" and row["attempts"] == 1
+    assert row["next_try"] > time.time() + 50
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "WAITING_CONTENT"
+    assert not asyncio.run(w.process_one())
+
+    restored = Store(w.root)
+    restored.recover()
+    assert restored.db.execute("SELECT next_try FROM jobs").fetchone()[0] == row["next_try"]
+    restored.db.close()
+
+    w.store.db.execute("UPDATE jobs SET next_try=0")
+    monkeypatch.setattr(w.sources, "capture", capture)
+    assert asyncio.run(w.process_one())
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "RENDERED"
+    assert asyncio.run(w.deliver_one())
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "ADAPTER_ACCEPTED"
+    assert len(Handler.receipts) == 1
+
+
+def test_capture_cooldown_stops_after_bounded_attempts(wb, server, monkeypatch):
+    c, w = wb
+    b = bot(c, server)
+    s = source(c)
+    sub(c, b, s)
+    hook(c, s)
+
+    async def cooled(*_):
+        raise DeferredRequest("Article site cooling down", time.time() + 60, 429)
+
+    monkeypatch.setattr(w.sources, "capture", cooled)
+    for attempt in range(5):
+        assert asyncio.run(w.process_one())
+        row = w.store.db.execute("SELECT state,attempts FROM jobs").fetchone()
+        assert row["attempts"] == attempt + 1
+        if attempt < 4:
+            assert row["state"] == "QUEUED"
+            w.store.db.execute("UPDATE jobs SET next_try=0")
+    assert row["state"] == "FAILED"
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "FAILED"
+    assert not asyncio.run(w.deliver_one())
+    assert not Handler.receipts
+
+
+def test_store_migrates_old_jobs_without_losing_queue(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    with sqlite3.connect(state / "workbench.sqlite3") as db:
+        db.execute(
+            "CREATE TABLE jobs(id TEXT PRIMARY KEY,event_id TEXT,workspace_id TEXT,"
+            "config_hash TEXT,snapshot TEXT,state TEXT,attempts INTEGER DEFAULT 0,"
+            "error TEXT,paths TEXT,created REAL,updated REAL,"
+            "UNIQUE(event_id,workspace_id,config_hash))"
+        )
+        db.execute("INSERT INTO jobs(id,snapshot,state) VALUES('old-job','{}','QUEUED')")
+    store = Store(tmp_path)
+    row = store.db.execute("SELECT state,next_try FROM jobs WHERE id='old-job'").fetchone()
+    assert tuple(row) == ("QUEUED", 0)
+    store.db.close()
 
 
 def test_unknown_send_and_restart_never_auto_resends(wb, server):
@@ -1177,6 +1253,96 @@ def test_deleting_one_shared_subscription_does_not_cancel_the_other(wb, server):
     assert manage(c, "subscription", "delete", [second]).status_code == 200
     assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
     assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "CANCELLED"
+
+
+def test_pausing_last_subscription_cancels_unsent_delivery(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    src = source(c)
+    binding = sub(c, b, src)
+    hook(c, src)
+    post(c, "subscriptions", {**binding, "enabled": False})
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "CANCELLED"
+    assert not asyncio.run(w.process_one())
+    assert not asyncio.run(w.deliver_one())
+    assert not Handler.receipts
+
+
+def test_bulk_pause_shared_subscriptions_preserves_other_route(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    src = source(c)
+    first = sub(c, b, src)
+    second = sub(c, b, src)
+    hook(c, src)
+    assert manage(c, "subscription", "disable", [first]).status_code == 200
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "QUEUED"
+    assert manage(c, "subscription", "disable", [second]).status_code == 200
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "CANCELLED"
+    assert not asyncio.run(w.deliver_one())
+    assert not Handler.receipts
+
+
+def test_bulk_pause_all_shared_subscriptions_cancels_unsent_delivery(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    src = source(c)
+    first = sub(c, b, src)
+    second = sub(c, b, src)
+    hook(c, src)
+    result = manage(c, "subscription", "disable", [first, second])
+    assert result.status_code == 200
+    assert result.json()["pending_deliveries"] == 1
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "CANCELLED"
+    assert not asyncio.run(w.deliver_one())
+    assert not Handler.receipts
+
+
+def test_pausing_source_cancels_queued_and_refuses_running_work(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    src = source(c)
+    sub(c, b, src)
+    hook(c, src)
+    w.store.db.execute("UPDATE jobs SET state='RUNNING'")
+    assert c.post("/api/sources", json={**src, "enabled": False}).status_code == 409
+    assert w.store.get("source", src["id"])["enabled"]
+    w.store.db.execute("UPDATE jobs SET state='QUEUED'")
+    post(c, "sources", {**src, "enabled": False})
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
+    assert w.store.db.execute("SELECT state FROM deliveries").fetchone()[0] == "CANCELLED"
+    assert not Handler.receipts
+
+
+def test_stale_disabled_route_is_rechecked_before_processing_and_sending(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    src = source(c)
+    binding = sub(c, b, src)
+    hook(c, src)
+
+    stale = w.store.get("subscription", binding["id"])
+    stale["enabled"] = False
+    w.store.put("subscription", stale)
+    assert asyncio.run(w.process_one())
+    assert w.store.db.execute("SELECT state FROM jobs").fetchone()[0] == "CANCELLED"
+
+    stale = w.store.get("subscription", binding["id"])
+    stale["enabled"] = True
+    w.store.put("subscription", stale)
+    hook(c, src, "event-2")
+    assert asyncio.run(w.process_one())
+    stale = w.store.get("source", src["id"])
+    stale["enabled"] = False
+    w.store.put("source", stale)
+    assert asyncio.run(w.deliver_one())
+    assert not asyncio.run(w.deliver_one())
+    states = [r[0] for r in w.store.db.execute("SELECT state FROM deliveries ORDER BY created")]
+    assert states == ["CANCELLED", "CANCELLED"]
+    assert not Handler.receipts
 
 
 def test_source_deletion_cascades_bindings_but_preserves_history(wb, server):

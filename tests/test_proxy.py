@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.api import create_app
-from backend.app.network import Network
+from backend.app.network import Network, RedirectResponse
 from backend.app.proxy import ProxyError
 
 
@@ -166,6 +166,14 @@ def test_authenticated_proxy_carries_real_requests_without_credential_leak(tunne
     assert origin.received[0]["headers"]["Authorization"] == "Origin-secret"
     assert all("Proxy-Authorization" not in r["headers"] for r in origin.received)
     assert "Authorization" not in origin.received[1]["headers"]
+
+
+def test_source_request_can_stop_before_following_redirect(tunnels):
+    origin, _, _ = tunnels
+    url = f"http://127.0.0.1:{origin.server_port}/redirect"
+    response = Network(["127.0.0.1"])._request("GET", url, follow_redirects=False)
+    assert response == RedirectResponse(f"http://127.0.0.1:{origin.server_port}/feed", 302)
+    assert [request["path"] for request in origin.received] == ["/redirect"]
 
 
 @pytest.mark.parametrize("scheme", ["http", "socks5"])

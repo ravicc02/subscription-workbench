@@ -332,7 +332,13 @@ class Channels:
             hook = await self.telegram_request(config, "GET", "getWebhookInfo")
             if hook.get("result", {}).get("url"):
                 raise ValueError("该 Bot 已配置 Webhook，请先处理旧接入以免冲突")
-            c = {"token": token, "offset": 0, "targets": []}
+            c = {
+                "token": token,
+                "offset": 0,
+                "targets": [],
+                "username": me["result"].get("username", ""),
+                "account_id": str(me["result"].get("id", "")),
+            }
             if config.get("chat_id"):
                 chat = await self.telegram_request(
                     config, "GET", "getChat?" + urlencode({"chat_id": config["chat_id"]})
@@ -491,8 +497,9 @@ class Channels:
             return c, "QR_EXPIRED", {}
         return c, "WAITING_QR", {"qr_status": status}
 
-    async def receive(self, kind, c):
+    async def receive(self, kind, c, with_messages=False):
         found = []
+        messages = []
         if kind == "weixin":
             data = self.wx_ok(
                 await self.net.json(
@@ -510,9 +517,22 @@ class Channels:
             for msg in data.get("msgs", []):
                 user = str(msg.get("from_user_id", ""))
                 context = msg.get("context_token")
-                if user and context:
+                if user and user != c.get("account_id") and context:
                     c.setdefault("contexts", {})[user] = context
                     found.append({"id": user, "name": user})
+                    text = "\n".join(
+                        part.get("text_item", {}).get("text", "")
+                        for part in msg.get("item_list") or []
+                        if isinstance(part, dict)
+                        and part.get("type") == 1
+                        and isinstance(part.get("text_item"), dict)
+                        and isinstance(part["text_item"].get("text"), str)
+                    ).strip()
+                    identity = msg.get("message_id") or msg.get("msg_id") or msg.get("client_id")
+                    if identity and isinstance(text, str) and 1 <= len(text) <= 4000:
+                        messages.append(
+                            {"id": str(identity), "target": user, "sender": user, "text": text}
+                        )
         elif kind == "telegram":
             data = await self.telegram_request(
                 c,
@@ -538,11 +558,39 @@ class Channels:
                             "name": chat.get("title") or chat.get("first_name") or str(chat["id"]),
                         }
                     )
+                user = msg.get("from") or {}
+                text = msg.get("text")
+                if (
+                    item.get("message")
+                    and chat.get("id")
+                    and not user.get("is_bot")
+                    and isinstance(text, str)
+                ):
+                    text = text.strip()
+                    group = chat.get("type") != "private"
+                    username = c.get("username", "")
+                    addressed = (
+                        not group
+                        or (username and ("@" + username).lower() in text.lower())
+                        or str(msg.get("reply_to_message", {}).get("from", {}).get("id", ""))
+                        == c.get("account_id", "missing")
+                    )
+                    if addressed and 1 <= len(text) <= 4000:
+                        messages.append(
+                            {
+                                "id": str(item["update_id"]),
+                                "target": str(chat["id"]),
+                                "sender": str(user.get("id", chat["id"])),
+                                "thread": str(msg.get("message_thread_id", "")),
+                                "group": group,
+                                "text": text,
+                            }
+                        )
         targets = c.setdefault("targets", [])
         for t in found:
             if not any(x["id"] == t["id"] for x in targets):
                 targets.append({**t, "selected": not targets})
-        return c
+        return (c, messages) if with_messages else c
 
     async def send(self, kind, c, target, text, delivery_id):
         if kind == "weixin":

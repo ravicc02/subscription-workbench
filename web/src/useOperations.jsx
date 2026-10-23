@@ -67,7 +67,7 @@ export default function useOperations() {
         } else if (result?.cancelled) {
           warning = true;
           detail = "配置已变更，本次检查结果已忽略。";
-        } else if (result?.summary) detail = result.summary;
+        } else if (result?.summary && !options.success) detail = result.summary;
         else if (
           typeof result?.items === "number" &&
           typeof result?.new_events === "number"

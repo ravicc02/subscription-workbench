@@ -14,18 +14,25 @@ from .agent import Editor
 from .catalog import Catalog
 from .channels import CATALOG, Channels, ContextRequired, PlatformRejected
 from .collection_settings import CollectionSettings
+from .conversation import Conversation
 from .core import Conflict, Store, Workspaces, digest, dumps, uid
 from .default_taxonomy import apply_default_taxonomy
 from .management import Management
 from .network import Network, RemoteError
 from .polling import DeferredRequest, RequestPolicy, retry_after
-from .profiles import profile_for, rules_for
+from .profiles import conversation_profile_for, profile_for, rules_for
 from .proxy import ProxyError
+from .search import SearchTools
+from .source_checks import SourceChecks
 from .sources import Sources
 from .subscriptions import public_subscription, resolved_source_ids
 
+MAX_CAPTURE_ATTEMPTS = 5
+MODEL_CONCURRENCY = 2
+CHAT_WORKERS = 2
 
-class Workbench(Catalog, Management, CollectionSettings):
+
+class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchTools, SourceChecks):
     def __init__(self, root, network=None):
         self.store = Store(root)
         self.root = Path(root).resolve()
@@ -41,6 +48,8 @@ class Workbench(Catalog, Management, CollectionSettings):
         self.tasks = []
         self.receivers = {}
         self.poll_locks = {}
+        self.source_check_lock = asyncio.Lock()
+        self.model_slots = asyncio.Semaphore(MODEL_CONCURRENCY)
         self.qr_locks = {}
         self.running = True
         self.import_sources()
@@ -192,6 +201,10 @@ class Workbench(Catalog, Management, CollectionSettings):
             "SELECT 1 FROM deliveries WHERE bot_id=? AND state='SENDING'", (key,)
         ).fetchone():
             raise ValueError("发送进行中，完成后再修改接入")
+        if self.store.db.execute(
+            "SELECT 1 FROM inbound_messages WHERE bot_id=? AND state='SENDING'", (key,)
+        ).fetchone():
+            raise ValueError("对话回复发送中，完成后再修改接入")
         if b.get("status") == "WAITING_QR":
             return self.public_bot(b)
         old = self.store.open(b.get("secret"))
@@ -245,6 +258,11 @@ class Workbench(Catalog, Management, CollectionSettings):
                 "UPDATE deliveries SET state='CANCELLED',error='Platform binding changed',updated=? WHERE bot_id=? AND state IN ('WAITING_CONTENT','READY','PAUSED','WAITING_CONTEXT')",
                 (time.time(), key),
             )
+            self.store.db.execute(
+                "UPDATE inbound_messages SET state='CANCELLED',error='Platform binding changed',updated=? "
+                "WHERE bot_id=? AND state IN ('QUEUED','READY','PAUSED','WAITING_CONTEXT')",
+                (time.time(), key),
+            )
         b.update(secret=self.store.seal(c), status=status, error=None, **extra)
         b.pop("draft_secret", None)
         if status != "WAITING_QR" and not b.get("workspace_id"):
@@ -262,6 +280,8 @@ class Workbench(Catalog, Management, CollectionSettings):
             raise ValueError("机器人名称无效")
         if body.get("model_id"):
             self.store.get("model", body["model_id"])
+        if body.get("conversation_model_id"):
+            self.store.get("model", body["conversation_model_id"])
         if "target_ids" in body and (
             not isinstance(body["target_ids"], list)
             or any(not isinstance(t, str) for t in body["target_ids"])
@@ -272,9 +292,14 @@ class Workbench(Catalog, Management, CollectionSettings):
         if any(
             k in body for k in ("workspace_id", "workspace_mode", "workspace_path", "target_ids")
         ):
-            if self.store.db.execute(
-                "SELECT 1 FROM deliveries WHERE bot_id=? AND state='SENDING'", (key,)
-            ).fetchone():
+            if (
+                self.store.db.execute(
+                    "SELECT 1 FROM deliveries WHERE bot_id=? AND state='SENDING'", (key,)
+                ).fetchone()
+                or self.store.db.execute(
+                    "SELECT 1 FROM inbound_messages WHERE bot_id=? AND state='SENDING'", (key,)
+                ).fetchone()
+            ):
                 raise ValueError("发送进行中，完成后再修改绑定")
             if any(k in body for k in ("workspace_id", "workspace_mode", "workspace_path")):
                 b = self.bind_bot(b, body)
@@ -292,7 +317,12 @@ class Workbench(Catalog, Management, CollectionSettings):
                 "UPDATE deliveries SET state='CANCELLED',error='Bot binding changed',updated=? WHERE bot_id=? AND state IN ('READY','PAUSED','WAITING_CONTEXT')",
                 (time.time(), key),
             )
-        for k in ("name", "enabled", "model_id"):
+            self.store.db.execute(
+                "UPDATE inbound_messages SET state='CANCELLED',error='Bot binding changed',updated=? "
+                "WHERE bot_id=? AND state IN ('QUEUED','READY','PAUSED','WAITING_CONTEXT')",
+                (time.time(), key),
+            )
+        for k in ("name", "enabled", "model_id", "conversation_model_id"):
             if k in body:
                 b[k] = body[k]
         b = self.store.put("bot", b)
@@ -414,17 +444,7 @@ class Workbench(Catalog, Management, CollectionSettings):
                     "DELETE FROM job_subscriptions WHERE job_id=? AND subscription_id=?",
                     (job_id, sub_id),
                 )
-            for job_id in cancel:
-                self.store.db.execute(
-                    "UPDATE jobs SET state='CANCELLED',error='Source unassigned',updated=? "
-                    "WHERE id=? AND state='QUEUED'",
-                    (time.time(), job_id),
-                )
-                self.store.db.execute(
-                    "UPDATE deliveries SET state='CANCELLED',error='Source unassigned',updated=? "
-                    "WHERE job_id=? AND state IN ('WAITING_CONTENT','READY','WAITING_CONTEXT','PAUSED')",
-                    (time.time(), job_id),
-                )
+            self.cancel_pending_jobs(cancel, "Source unassigned or paused")
             self.store.audit("source", data["id"], "SAVED")
             if nested:
                 self.store.db.execute("RELEASE source_save")
@@ -532,15 +552,7 @@ class Workbench(Catalog, Management, CollectionSettings):
                     "DELETE FROM job_subscriptions WHERE job_id=? AND subscription_id=?",
                     (job_id, row["id"]),
                 )
-            for job_id in cancel:
-                self.store.db.execute(
-                    "UPDATE jobs SET state='CANCELLED',error='Source unassigned',updated=? WHERE id=? AND state='QUEUED'",
-                    (time.time(), job_id),
-                )
-                self.store.db.execute(
-                    "UPDATE deliveries SET state='CANCELLED',error='Source unassigned',updated=? WHERE job_id=? AND state IN ('WAITING_CONTENT','READY','WAITING_CONTEXT','PAUSED')",
-                    (time.time(), job_id),
-                )
+            self.cancel_pending_jobs(cancel, "Subscription unassigned or paused")
             self.store.audit("subscription", row["id"], "SAVED")
             self.store.db.commit()
         except BaseException:
@@ -556,6 +568,29 @@ class Workbench(Catalog, Management, CollectionSettings):
             or self.store.setting("default_model")
         )
         return self.store.get("model", key) if key else None
+
+    def job_has_route(self, job_id):
+        origin = self.store.db.execute(
+            "SELECT inputs.source_id FROM jobs JOIN inputs ON inputs.id=jobs.event_id "
+            "WHERE jobs.id=?",
+            (job_id,),
+        ).fetchone()
+        sources = {s["id"]: s for s in self.store.all("source")}
+        source = sources.get(origin[0]) if origin else None
+        if not source or not source.get("enabled"):
+            return False
+        members = {
+            row[0]
+            for row in self.store.db.execute(
+                "SELECT subscription_id FROM job_subscriptions WHERE job_id=?", (job_id,)
+            )
+        }
+        return any(
+            sub["id"] in members
+            and sub.get("enabled")
+            and source["id"] in resolved_source_ids(sub, [source])
+            for sub in self.store.all("subscription")
+        )
 
     def ingest(self, source, rows, external=False, allow_historical=False):
         now = time.time()
@@ -748,11 +783,16 @@ class Workbench(Catalog, Management, CollectionSettings):
 
     async def process_one(self):
         row = self.store.db.execute(
-            "SELECT * FROM jobs WHERE state='QUEUED' ORDER BY created LIMIT 1"
+            "SELECT * FROM jobs WHERE state='QUEUED' AND next_try<=? ORDER BY created LIMIT 1",
+            (time.time(),),
         ).fetchone()
         if not row:
             return False
         job = dict(row)
+        if not self.job_has_route(job["id"]):
+            self.cancel_pending_jobs([job["id"]], "Source or subscription no longer active")
+            self.store.audit("job", job["id"], "CANCELLED", {"reason": "No active route"})
+            return True
         now = time.time()
         self.store.db.execute(
             "UPDATE jobs SET state='RUNNING',attempts=attempts+1,updated=? WHERE id=?",
@@ -808,7 +848,8 @@ class Workbench(Catalog, Management, CollectionSettings):
             }
             self.workspaces.file(root, paths["event"]).write_text(dumps(event), encoding="utf-8")
             if snapshot["mode"] == "agent":
-                text = await self.editor.run(workspace, snapshot, paths)
+                async with self.model_slots:
+                    text = await self.editor.run(workspace, snapshot, paths)
             else:
                 content = captured["text"]
                 title = captured.get("title", "订阅更新")
@@ -851,7 +892,7 @@ class Workbench(Catalog, Management, CollectionSettings):
                 )
             state = "RENDERED" if text else "SKIPPED"
             self.store.db.execute(
-                "UPDATE jobs SET state=?,updated=? WHERE id=?",
+                "UPDATE jobs SET state=?,next_try=0,error=NULL,updated=? WHERE id=?",
                 (state, time.time(), job["id"]),
             )
             self.store.db.execute(
@@ -859,6 +900,27 @@ class Workbench(Catalog, Management, CollectionSettings):
                 ("READY" if text else "SKIPPED", time.time(), job["id"]),
             )
             self.store.audit("job", job["id"], state)
+        except DeferredRequest as exc:
+            if job["attempts"] + 1 >= MAX_CAPTURE_ATTEMPTS:
+                error = "采集暂缓超过重试上限：" + self.safe_error(exc)
+                self.store.db.execute(
+                    "UPDATE jobs SET state='FAILED',next_try=0,error=?,updated=? WHERE id=?",
+                    (error, time.time(), job["id"]),
+                )
+                self.store.db.execute(
+                    "UPDATE deliveries SET state='FAILED',error=?,updated=? WHERE job_id=? AND state='WAITING_CONTENT'",
+                    (error, time.time(), job["id"]),
+                )
+                self.store.audit("job", job["id"], "FAILED", {"error": error})
+            else:
+                retry_at = max(time.time() + 1, exc.retry_at)
+                self.store.db.execute(
+                    "UPDATE jobs SET state='QUEUED',next_try=?,error=?,updated=? WHERE id=?",
+                    (retry_at, self.safe_error(exc), time.time(), job["id"]),
+                )
+                self.store.audit(
+                    "job", job["id"], "DEFERRED", {"retry_at": retry_at, "status": exc.status}
+                )
         except Exception as exc:
             error = self.safe_error(exc)
             self.store.db.execute(
@@ -918,7 +980,6 @@ class Workbench(Catalog, Management, CollectionSettings):
         if not row:
             return False
         d = dict(row)
-        b = self.store.get("bot", d["bot_id"])
 
         def state(value, error=None, next_try=0):
             self.store.db.execute(
@@ -927,6 +988,10 @@ class Workbench(Catalog, Management, CollectionSettings):
             )
             self.store.audit("delivery", d["id"], value, {"error": error} if error else {})
 
+        if not self.job_has_route(d["job_id"]):
+            state("CANCELLED", "Source or subscription no longer active")
+            return True
+        b = self.store.get("bot", d["bot_id"])
         if b["binding_revision"] != d["binding_revision"]:
             state("CANCELLED", "Target or workspace binding changed")
             return True
@@ -1009,7 +1074,9 @@ class Workbench(Catalog, Management, CollectionSettings):
                 ):
                     return
                 try:
-                    c = await self.channels.receive(b["type"], self.store.open(b["secret"]))
+                    c, messages = await self.channels.receive(
+                        b["type"], self.store.open(b["secret"]), with_messages=True
+                    )
                     latest = self.store.get("bot", key)
                     # Don't overwrite a target selection or new login made while this request was in flight.
                     if latest["revision"] != b["revision"]:
@@ -1023,7 +1090,15 @@ class Workbench(Catalog, Management, CollectionSettings):
                         error=None,
                         last_connected=time.time(),
                     )
-                    self.store.put("bot", b)
+                    self.store.db.execute("BEGIN IMMEDIATE")
+                    try:
+                        for message in messages:
+                            self.accept_inbound(b, c, message)
+                        self.store.put("bot", b)
+                        self.store.db.commit()
+                    except BaseException:
+                        self.store.db.rollback()
+                        raise
                 except Exception as exc:
                     b = self.store.get("bot", key)
                     b.update(status="RECONNECTING", error=self.safe_error(exc))
@@ -1113,8 +1188,10 @@ class Workbench(Catalog, Management, CollectionSettings):
                 self.store.audit("workspace", workspace["id"], "PROFILE_MIGRATED")
         self.tasks = [
             asyncio.create_task(self.loop(self.tick, 3)),
+            asyncio.create_task(self.loop(self.source_check_one, 0.5)),
             asyncio.create_task(self.loop(self.process_one, 1)),
-            asyncio.create_task(self.loop(self.deliver_one, 0.5)),
+            *(asyncio.create_task(self.loop(self.chat_one, 0.5)) for _ in range(CHAT_WORKERS)),
+            asyncio.create_task(self.loop(self.send_one, 0.5)),
         ]
 
     async def stop(self):
@@ -1138,7 +1215,11 @@ class Workbench(Catalog, Management, CollectionSettings):
         return {
             "bots": [self.public_bot(b) for b in self.store.all("bot")],
             "workspaces": [
-                {**row, "ai_profile": profile_for(row, self.workspaces)}
+                {
+                    **row,
+                    "ai_profile": profile_for(row, self.workspaces),
+                    "conversation_profile": conversation_profile_for(row),
+                }
                 for row in self.store.all("workspace")
             ],
             "sources": [self.public_source(s) for s in self.store.all("source")],
@@ -1155,6 +1236,8 @@ class Workbench(Catalog, Management, CollectionSettings):
                 "inputs": self.store.db.execute("SELECT COUNT(*) FROM inputs").fetchone()[0],
                 "jobs": counts("jobs"),
                 "deliveries": counts("deliveries"),
+                "conversations": counts("inbound_messages"),
             },
             "default_model": self.store.setting("default_model"),
+            "conversation_model_id": self.store.setting("conversation_model_id"),
         }

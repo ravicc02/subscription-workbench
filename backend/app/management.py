@@ -4,14 +4,23 @@ import json
 import time
 
 from .core import Conflict
-from .profiles import profile_for, validate_profile
+from .profiles import (
+    conversation_profile_for,
+    profile_for,
+    validate_conversation_profile,
+    validate_profile,
+)
 from .subscriptions import resolved_source_ids, source_ids
 
 
 class Management:
     def workspace_settings(self, key):
         w = self.store.get("workspace", key)
-        return {**w, "ai_profile": profile_for(w, self.workspaces)}
+        return {
+            **w,
+            "ai_profile": profile_for(w, self.workspaces),
+            "conversation_profile": conversation_profile_for(w),
+        }
 
     def rename_workspace(self, key, body):
         workspace = self.store.get("workspace", key)
@@ -38,9 +47,16 @@ class Management:
         model_id = body.get("model_id", w.get("model_id"))
         if model_id:
             self.store.get("model", model_id)
+        conversation_model_id = body.get("conversation_model_id", w.get("conversation_model_id"))
+        if conversation_model_id:
+            self.store.get("model", conversation_model_id)
         w.update(
             name=name.strip(),
             model_id=model_id,
+            conversation_model_id=conversation_model_id,
+            conversation_profile=validate_conversation_profile(
+                body.get("conversation_profile", conversation_profile_for(w))
+            ),
             ai_profile=validate_profile(body.get("ai_profile", profile_for(w, self.workspaces))),
         )
         saved = self.store.put("workspace", w, w["revision"])
@@ -49,7 +65,8 @@ class Management:
 
     def subscription_unlinks(self, old, new):
         sources = self.store.all("source")
-        removed = set(resolved_source_ids(old, sources)) - set(resolved_source_ids(new, sources))
+        new_sources = set(resolved_source_ids(new, sources)) if new.get("enabled") else set()
+        removed = set(resolved_source_ids(old, sources)) - new_sources
         if old["workspace_id"] != new["workspace_id"]:
             removed = set(resolved_source_ids(old, sources))
         edges = []
@@ -64,10 +81,14 @@ class Management:
             if job["origin_source"] not in removed:
                 continue
             edges.append(job["id"])
-            others = self.store.db.execute(
-                "SELECT 1 FROM job_subscriptions WHERE job_id=? AND subscription_id!=?",
-                (job["id"], old["id"]),
-            ).fetchone()
+            active = {s["id"] for s in self.store.all("subscription") if s.get("enabled")}
+            others = any(
+                member[0] in active
+                for member in self.store.db.execute(
+                    "SELECT subscription_id FROM job_subscriptions WHERE job_id=? AND subscription_id!=?",
+                    (job["id"], old["id"]),
+                )
+            )
             if others:
                 continue
             if (
@@ -84,20 +105,21 @@ class Management:
         removed = {
             sub["id"]
             for sub in self.store.all("subscription")
-            if sub.get("category_id")
-            and old["id"] in resolved_source_ids(sub, [old])
-            and old["id"] not in resolved_source_ids(sub, [new])
+            if old["id"] in resolved_source_ids(sub, [old])
+            and (not new.get("enabled") or old["id"] not in resolved_source_ids(sub, [new]))
         }
         if not removed:
             return [], []
         edges, cancel = [], []
         for row in self.store.db.execute(
             "SELECT jobs.* FROM jobs JOIN inputs ON inputs.id=jobs.event_id "
-            "WHERE inputs.source_id=?", (old["id"],)
+            "WHERE inputs.source_id=?",
+            (old["id"],),
         ):
             job = dict(row)
             members = {
-                member[0] for member in self.store.db.execute(
+                member[0]
+                for member in self.store.db.execute(
                     "SELECT subscription_id FROM job_subscriptions WHERE job_id=?", (job["id"],)
                 )
             }
@@ -107,12 +129,29 @@ class Management:
             edges.extend((job["id"], sub_id) for sub_id in unlinked)
             if members - removed:
                 continue
-            if job["state"] == "RUNNING" or self.store.db.execute(
-                "SELECT 1 FROM deliveries WHERE job_id=? AND state='SENDING'", (job["id"],)
-            ).fetchone():
+            if (
+                job["state"] == "RUNNING"
+                or self.store.db.execute(
+                    "SELECT 1 FROM deliveries WHERE job_id=? AND state='SENDING'", (job["id"],)
+                ).fetchone()
+            ):
                 raise Conflict("该来源的内容正在处理或发送，请完成后再修改分类标签")
             cancel.append(job["id"])
         return edges, cancel
+
+    def cancel_pending_jobs(self, job_ids, reason):
+        cancelled = 0
+        for job_id in set(job_ids):
+            self.store.db.execute(
+                "UPDATE jobs SET state='CANCELLED',error=?,updated=? WHERE id=? AND state='QUEUED'",
+                (reason, time.time(), job_id),
+            )
+            cancelled += self.store.db.execute(
+                "UPDATE deliveries SET state='CANCELLED',error=?,updated=? "
+                "WHERE job_id=? AND state IN ('WAITING_CONTENT','READY','WAITING_CONTEXT','PAUSED')",
+                (reason, time.time(), job_id),
+            ).rowcount
+        return cancelled
 
     def manage(self, body, preview=False):
         kind = body.get("kind")
@@ -191,7 +230,15 @@ class Management:
                 sending = self.store.db.execute(
                     "SELECT bot_id FROM deliveries WHERE state='SENDING'"
                 ).fetchall()
-                blocked = any(r[0] in selected for r in sending)
+                blocked = (
+                    any(r[0] in selected for r in sending)
+                    or self.store.db.execute(
+                        "SELECT 1 FROM inbound_messages WHERE bot_id IN ("
+                        + ",".join("?" for _ in selected)
+                        + ") AND state IN ('RUNNING','SENDING') LIMIT 1",
+                        tuple(selected),
+                    ).fetchone()
+                )
             else:
                 affected_ids = {j["id"] for j in jobs}
                 blocked = any(
@@ -220,8 +267,14 @@ class Management:
                 (k, o)
                 for k in ("workspace", "bot", "subscription")
                 for o in self.store.all(k)
-                if o.get("model_id") in selected
+                if o.get("model_id") in selected or o.get("conversation_model_id") in selected
             ]
+            if self.store.db.execute(
+                "SELECT 1 FROM inbound_messages WHERE state IN ('RUNNING','SENDING') "
+                "AND model_id IN (" + ",".join("?" for _ in selected) + ") LIMIT 1",
+                tuple(selected),
+            ).fetchone():
+                raise Conflict("对话正在处理或发送，请完成后再删除模型")
         impact = {
             "count": len(objects),
             "names": [o["name"] for o in objects],
@@ -240,6 +293,32 @@ class Management:
         try:
             if action in ("enable", "disable"):
                 for row in objects:
+                    if (
+                        action == "disable"
+                        and row.get("enabled")
+                        and kind in ("source", "subscription")
+                    ):
+                        if kind == "source":
+                            edges, cancel = self.source_subscription_unlinks(
+                                row, {**row, "enabled": False}
+                            )
+                            for job_id, sub_id in edges:
+                                self.store.db.execute(
+                                    "DELETE FROM job_subscriptions WHERE job_id=? AND subscription_id=?",
+                                    (job_id, sub_id),
+                                )
+                        else:
+                            edges, cancel = self.subscription_unlinks(
+                                row, {**row, "enabled": False}
+                            )
+                            for job_id in edges:
+                                self.store.db.execute(
+                                    "DELETE FROM job_subscriptions WHERE job_id=? AND subscription_id=?",
+                                    (job_id, row["id"]),
+                                )
+                        impact["pending_deliveries"] += self.cancel_pending_jobs(
+                            cancel, "Subscription or source paused"
+                        )
                     row["enabled"] = action == "enable"
                     self.store.put(kind, row, row["revision"])
             else:
@@ -251,8 +330,13 @@ class Management:
                     if default in selected:
                         default = remaining[0]["id"] if remaining else None
                         self.store.set_setting("default_model", default)
+                    if self.store.setting("conversation_model_id") in selected:
+                        self.store.set_setting("conversation_model_id", None)
                     for ref_kind, row in refs:
-                        row["model_id"] = None
+                        if row.get("model_id") in selected:
+                            row["model_id"] = None
+                        if row.get("conversation_model_id") in selected:
+                            row["conversation_model_id"] = None
                         self.store.put(ref_kind, row, row["revision"])
                 for j in jobs:
                     if j["state"] == "QUEUED":
@@ -264,6 +348,13 @@ class Management:
                     self.store.db.execute(
                         "UPDATE deliveries SET state='CANCELLED',error='Configuration removed',updated=? WHERE id=?",
                         (time.time(), d["id"]),
+                    )
+                if kind == "bot":
+                    self.store.db.execute(
+                        "UPDATE inbound_messages SET state='CANCELLED',error='Bot removed',updated=? "
+                        "WHERE bot_id IN (" + ",".join("?" for _ in selected) + ") "
+                        "AND state IN ('QUEUED','READY','PAUSED','WAITING_CONTEXT')",
+                        (time.time(), *selected),
                     )
                 for key in deleting_subs:
                     self.store.db.execute(

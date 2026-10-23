@@ -12,6 +12,7 @@ import socket
 import ssl
 import threading
 import time
+from dataclasses import dataclass
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urljoin, urlsplit
 
@@ -26,6 +27,12 @@ class RemoteError(HTTPError):
             {"Retry-After": retry_after} if retry_after else {},
             None,
         )
+
+
+@dataclass(frozen=True)
+class RedirectResponse:
+    location: str
+    status: int
 
 
 class Network:
@@ -143,6 +150,7 @@ class Network:
         redirects=0,
         proxy=None,
         _pinned_ip=None,
+        follow_redirects=True,
     ):
         if _pinned_ip is not None:
             u = self.validate_url(url)
@@ -195,6 +203,8 @@ class Network:
                 if method != "GET" or redirects >= 3 or _pinned_ip:
                     raise RemoteError(r.status)
                 target = urljoin(url, r.getheader("Location", ""))
+                if not follow_redirects:
+                    return RedirectResponse(target, r.status)
                 clean = {
                     k: v
                     for k, v in h.items()

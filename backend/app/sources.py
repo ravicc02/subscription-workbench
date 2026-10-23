@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from .article import clean_body
 from .core import digest
+from .network import RedirectResponse
 
 
 def canonical(url):
@@ -93,14 +94,31 @@ class Sources:
         self.policy = policy
         self.proxy_config = proxy_config or (lambda source: None)
 
-    async def fetch(self, url, source):
-        # Blocking HTTP is isolated to threads; the reused same-site lock/cooldown applies to both RSS and bodies.
+    async def fetch(self, url, source, allowed_domains=None):
+        # Apply site cooldown at every redirect hop, without nesting locks on same-site redirects.
         proxy = self.proxy_config(source)
+        current = url
+        for redirects in range(4):
+            parsed = self.net.validate_url(current)
+            if allowed_domains is not None and parsed.hostname not in allowed_domains:
+                raise ValueError("Redirected article domain is outside source allowlist")
 
-        def operation():
-            return self.net._request("GET", url, limit=2_000_000, proxy=proxy)
+            def operation():
+                return self.net._request(
+                    "GET",
+                    current,
+                    limit=2_000_000,
+                    proxy=proxy,
+                    redirects=redirects,
+                    follow_redirects=False,
+                )
 
-        return await asyncio.to_thread(self.policy.fetch, url, source, operation)
+            result = await asyncio.to_thread(self.policy.fetch, current, source, operation)
+            if isinstance(result, RedirectResponse):
+                current = result.location
+                continue
+            return result
+        raise ValueError("Too many redirects")
 
     async def discover(self, source):
         if source["type"] == "webhook":
@@ -163,7 +181,9 @@ class Sources:
                     "title": title,
                     "text": content[:80000],
                     "content_type": "json",
-                    "url": str(link) if isinstance(link, str) and link.startswith("https://") else source["url"],
+                    "url": str(link)
+                    if isinstance(link, str) and link.startswith("https://")
+                    else source["url"],
                     "published": published,
                     "published_timestamp": stamp(published) if published else time.time(),
                 }
@@ -193,7 +213,7 @@ class Sources:
         domains = source.get("domains") or [urlsplit(source["url"]).hostname]
         if host not in domains:
             raise ValueError("Article domain is outside source allowlist")
-        raw, final, _ = await self.fetch(row["url"], source)
+        raw, final, _ = await self.fetch(row["url"], source, allowed_domains=domains)
         if urlsplit(final).hostname not in domains:
             raise ValueError("Redirected article domain is outside source allowlist")
         paragraphs, _, level = clean_body(

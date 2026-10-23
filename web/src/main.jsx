@@ -23,6 +23,8 @@ import {
   Spin,
   Tooltip,
   Popover,
+  Progress,
+  Grid,
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import {
@@ -34,6 +36,7 @@ import {
   ApiOutlined,
   HistoryOutlined,
   BranchesOutlined,
+  MessageOutlined,
   PlusOutlined,
   ReloadOutlined,
   ArrowRightOutlined,
@@ -52,6 +55,7 @@ import WorkspacePanel from "./WorkspacePanel";
 import ProxyPanel from "./ProxyPanel";
 import TaxonomyPanel from "./TaxonomyPanel";
 import SubscriptionPlaza from "./SubscriptionPlaza";
+import ConversationPanel from "./ConversationPanel";
 const api = async (path, method = "GET", body) => {
   const r = await fetch("/api/" + path, {
     method,
@@ -63,7 +67,12 @@ const api = async (path, method = "GET", body) => {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const v = await r.json();
-  if (!r.ok) throw new Error(v.error || v.detail || "请求失败");
+  if (!r.ok) {
+    if (r.status === 401 && !path.startsWith("auth/")) {
+      window.dispatchEvent(new Event("workbench:session-expired"));
+    }
+    throw new Error(v.error || v.detail || "请求失败");
+  }
   return v;
 };
 const STATES = {
@@ -88,6 +97,16 @@ const STATES = {
   PAUSED: ["已暂停", "default"],
   CANCELLED: ["已取消", "default"],
 };
+const SOURCE_CHECK_RESULTS = {
+  QUEUED: ["排队中", "default"],
+  RUNNING: ["检查中", "processing"],
+  OK: ["完成", "green"],
+  BASELINE: ["已建基线", "green"],
+  DEFERRED: ["间隔/冷却", "orange"],
+  FAILED: ["失败", "red"],
+  CANCELLED: ["已取消", "default"],
+  INTERRUPTED: ["中断待核实", "red"],
+};
 const badge = (s) => <Tag color={STATES[s]?.[1]}>{STATES[s]?.[0] || s}</Tag>;
 const subscriptionSourceIds = (row) =>
   row.source_ids || (row.source_id ? [row.source_id] : []);
@@ -110,6 +129,7 @@ const NAV = [
   ["network", SettingOutlined, "采集网络"],
   ["subscriptions", BellOutlined, "订阅"],
   ["models", ApiOutlined, "模型"],
+  ["conversations", MessageOutlined, "对话"],
   ["history", HistoryOutlined, "运行与回溯"],
   ["platforms", BranchesOutlined, "平台能力"],
 ];
@@ -203,6 +223,7 @@ function Login({ status, onDone }) {
 }
 function Workbench() {
   const { message, modal } = App.useApp();
+  const screens = Grid.useBreakpoint();
   const [auth, setAuth] = useState(null),
     [data, setData] = useState(null),
     [tab, setTab] = useState("overview"),
@@ -220,13 +241,18 @@ function Workbench() {
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
   const [sourceCategoryFilter, setSourceCategoryFilter] = useState(null);
   const [sourceTagFilter, setSourceTagFilter] = useState(null);
+  const [sourceStatusFilter, setSourceStatusFilter] = useState(null);
+  const [sourceCheck, setSourceCheck] = useState(null);
+  const [sourceCheckId, setSourceCheckId] = useState(null);
+  const [sourceChecks, setSourceChecks] = useState([]);
+  const [sourceCheckOpen, setSourceCheckOpen] = useState(false);
   const [form] = Form.useForm();
   const operations = useOperations();
   const busy = !!operations.active["form-save"];
   const [selectedRows, setSelectedRows] = useState({});
-  const [bulkChecking, setBulkChecking] = useState([]);
   const [refreshTick, setRefreshTick] = useState(0);
   const refreshing = useRef(false);
+  const expired = useRef(false);
   const selectedType = Form.useWatch("type", form),
     workspaceMode = Form.useWatch("workspace_mode", form),
     typedWorkspacePath = Form.useWatch("workspace_path", form),
@@ -275,11 +301,53 @@ function Workbench() {
     check();
   }, []);
   useEffect(() => {
+    if (auth?.authenticated) expired.current = false;
+  }, [auth?.authenticated]);
+  useEffect(() => {
+    const onExpired = () => {
+      if (expired.current) return;
+      expired.current = true;
+      setAuth((previous) =>
+        previous ? { ...previous, authenticated: false } : previous,
+      );
+      setData(null);
+      message.warning("登录已失效，请重新登录");
+    };
+    window.addEventListener("workbench:session-expired", onExpired);
+    return () => window.removeEventListener("workbench:session-expired", onExpired);
+  }, [message]);
+  useEffect(() => {
     if (!auth?.authenticated) return;
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [auth?.authenticated]);
+  useEffect(() => {
+    if (!auth?.authenticated || tab !== "sources") return;
+    let alive = true;
+    const load = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const { batches } = await api("source-checks?limit=10");
+        if (!alive) return;
+        setSourceChecks(batches);
+        setSourceCheckId((current) => current || batches[0]?.id || null);
+        const key = sourceCheckId || batches[0]?.id;
+        if (key) {
+          const detail = await api(`source-checks/${key}`);
+          if (alive) setSourceCheck(detail);
+        }
+      } catch (e) {
+        if (alive) setError("读取检查记录失败：" + e.message);
+      }
+    };
+    void load();
+    const timer = setInterval(load, 2500);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [auth?.authenticated, tab, sourceCheckId]);
   useEffect(() => {
     if (
       !dialog ||
@@ -314,17 +382,23 @@ function Workbench() {
   useEffect(() => {
     if (tab !== "history" || !auth?.authenticated) return;
     let alive = true;
-    api(
-      `history?kind=${historyKind}&page=${historyPage}&state=${historyState}&q=${encodeURIComponent(search)}`,
-    )
-      .then((v) => {
-        if (alive) setHistory(v);
-      })
-      .catch((e) => {
-        if (alive) setError("读取运行记录失败：" + e.message);
-      });
+    const load = () => {
+      if (document.visibilityState === "hidden") return;
+      api(
+        `history?kind=${historyKind}&page=${historyPage}&state=${historyState}&q=${encodeURIComponent(search)}`,
+      )
+        .then((v) => {
+          if (alive) setHistory(v);
+        })
+        .catch((e) => {
+          if (alive) setError("读取运行记录失败：" + e.message);
+        });
+    };
+    load();
+    const timer = setInterval(load, 10000);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, [
     tab,
@@ -402,6 +476,29 @@ function Workbench() {
     data;
   const categories = data.categories || [],
     taxonomyTags = data.tags || [];
+  const sourceStatus = (source) => {
+    if (!source.enabled) return "paused";
+    if (source.type === "webhook") return "webhook";
+    if (source.cooldown_until > Date.now() / 1000) return "cooldown";
+    if (source.health?.error) return "failed";
+    return source.health?.baseline ? "healthy" : "pending";
+  };
+  const checkableSources = sources.filter(
+    (source) => source.enabled && source.type !== "webhook",
+  );
+  const visibleSources = sources.filter(
+    (source) =>
+      source.name.toLowerCase().includes(search.toLowerCase()) &&
+      (!sourceCategoryFilter || source.category_id === sourceCategoryFilter) &&
+      (!sourceTagFilter || (source.tag_ids || []).includes(sourceTagFilter)) &&
+      (!sourceStatusFilter || sourceStatus(source) === sourceStatusFilter),
+  );
+  const sourceCheckBusy =
+    sourceChecks.some((batch) => ["QUEUED", "RUNNING"].includes(batch.state)) ||
+    ["QUEUED", "RUNNING"].includes(sourceCheck?.state) ||
+    Object.keys(operations.active).some(
+      (key) => key === "batch-check-sources" || key.startsWith("check-"),
+    );
   const categoryName = (id) =>
     categories.find((c) => c.id === id)?.name || "未分类";
   const tagOptions = (categoryId) =>
@@ -532,44 +629,52 @@ function Workbench() {
       },
     });
   };
-  const checkSources = async (rows) => {
-    if (!rows.length) return;
-    const ids = rows.map((r) => r.id);
-    setBulkChecking(ids);
+  const checkSources = async (rows, label, scope) => {
     const result = await execute(
-      async (progress) => {
-        let index = 0;
-        const results = [];
-        const worker = async () => {
-          while (index < rows.length) {
-            const source = rows[index++];
-            try {
-              results.push(await api(`sources/${source.id}/poll`, "POST", {}));
-            } catch (error) {
-              results.push({ failed: true });
-            }
-            progress(
-              `已完成 ${results.length}/${rows.length} 个订阅源检查，可以继续其他操作。`,
-            );
-            setBulkChecking((value) => value.filter((id) => id !== source.id));
-          }
-        };
-        await Promise.all(
-          Array.from({ length: Math.min(3, rows.length) }, worker),
-        );
-        const failed = results.filter((r) => r.failed).length,
-          deferred = results.filter((r) => r.deferred).length,
-          cancelled = results.filter((r) => r.cancelled).length;
-        return {
-          summary: `已完成 ${results.length} 个检查：正常 ${results.length - failed - deferred - cancelled}，等待间隔或冷却 ${deferred}，配置已变更 ${cancelled}，失败 ${failed}。`,
-          warning: failed + deferred + cancelled > 0,
-        };
-      },
-      undefined,
-      { key: "batch-check-sources", label: `批量检查 ${rows.length} 个订阅源` },
+      () =>
+        api(
+          "source-checks",
+          "POST",
+          scope === "all"
+            ? { scope }
+            : { scope, source_ids: rows.map((source) => source.id) },
+        ),
+      "检查任务已创建，离开页面后仍会继续",
+      { key: "batch-check-sources", label },
     );
-    setBulkChecking([]);
+    if (result) {
+      setSourceCheck(result);
+      setSourceCheckId(result.id);
+      setSourceChecks((current) => [result, ...current].slice(0, 10));
+    } else {
+      const history = await api("source-checks?limit=10").catch(() => null);
+      if (history) setSourceChecks(history.batches);
+    }
     return result;
+  };
+  const confirmSourceCheck = (rows, label, scope) => {
+    const eligible = rows.filter(
+      (source) => source.enabled && source.type !== "webhook",
+    );
+    if (!eligible.length || sourceCheckBusy) return;
+    modal.confirm({
+      title: `${label}？`,
+      content: (
+        <div>
+          <p>
+            将检查 {eligible.length} 个已启用的 RSS、网页或 API 来源；跳过{" "}
+            {rows.length - eligible.length} 个暂停或 Webhook 来源。
+          </p>
+          <p>
+            这是正常采集：遵守轮询间隔与站点冷却，不补发历史；发现新事件时可能触发整理和真实推送。
+          </p>
+        </div>
+      ),
+      okText: "开始检查",
+      onOk: () => {
+        void checkSources(eligible, label, scope);
+      },
+    });
   };
   const batchBar = (kind) =>
     chosen(kind).length > 0 && (
@@ -604,18 +709,16 @@ function Workbench() {
           )}
           {kind === "source" && (
             <Button
-              disabled={chosen(kind).every(
-                (source) => source.type === "webhook",
+              disabled={sourceCheckBusy || chosen(kind).every(
+                (source) => source.type === "webhook" || !source.enabled,
               )}
               title={
-                chosen(kind).every((source) => source.type === "webhook")
-                  ? "Webhook 通过事件触发，无需轮询检查"
+                chosen(kind).every((source) => source.type === "webhook" || !source.enabled)
+                  ? "暂停的来源和 Webhook 不参与轮询检查"
                   : undefined
               }
               loading={!!operations.active["batch-check-sources"]}
-              onClick={() =>
-                checkSources(chosen(kind).filter((s) => s.type !== "webhook"))
-              }
+              onClick={() => confirmSourceCheck(chosen(kind), "检查所选订阅源", "selected")}
             >
               检查所选
             </Button>
@@ -811,7 +914,7 @@ function Workbench() {
             <h1>{NAV.find((n) => n[0] === tab)?.[2]}</h1>
             <p>{subtitles[tab]}</p>
           </div>
-          <Space>
+          <Space wrap>
             <Popover
               trigger="click"
               placement="bottomRight"
@@ -886,6 +989,19 @@ function Workbench() {
             >
               刷新
             </Button>
+            {tab === "sources" && (
+              <Tooltip title={`已启用且可轮询的来源 ${checkableSources.length} 个；暂停及 Webhook 不参与`}>
+                <Button
+                  aria-label="检查全部"
+                  icon={<CheckCircleOutlined />}
+                  disabled={!checkableSources.length || sourceCheckBusy}
+                  loading={!!operations.active["batch-check-sources"]}
+                  onClick={() => confirmSourceCheck(sources, "检查全部订阅源", "all")}
+                >
+                  检查全部
+                </Button>
+              </Tooltip>
+            )}
             {addActions[tab] && (
               <Button
                 aria-label={addActions[tab][1]}
@@ -1131,8 +1247,8 @@ function Workbench() {
         {tab === "sources" && (
           <section className="panel">
             {batchBar("source")}
-            <div className="table-tools">
-              <span>{sources.length} 个来源 · 按订阅启用采集</span>
+            <div className="table-tools source-tools">
+              <span>显示 {visibleSources.length} / {sources.length} 个来源 · 按订阅启用采集</span>
               <Select
                 allowClear
                 placeholder="全部分类"
@@ -1156,11 +1272,27 @@ function Workbench() {
                 options={tagOptions(sourceCategoryFilter)}
                 onChange={setSourceTagFilter}
               />
+              <Select
+                aria-label="来源状态"
+                allowClear
+                placeholder="全部状态"
+                value={sourceStatusFilter}
+                style={{ minWidth: 145 }}
+                options={[
+                  { label: "请求失败", value: "failed" },
+                  { label: "冷却中", value: "cooldown" },
+                  { label: "待建基线", value: "pending" },
+                  { label: "已建立基线", value: "healthy" },
+                  { label: "已暂停", value: "paused" },
+                  { label: "Webhook 事件", value: "webhook" },
+                ]}
+                onChange={setSourceStatusFilter}
+              />
               <Input.Search
                 allowClear
                 placeholder="搜索来源"
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: 260 }}
+                style={{ width: 210 }}
               />
               <Button
                 icon={<TagsOutlined />}
@@ -1169,21 +1301,50 @@ function Workbench() {
                 分类与标签
               </Button>
             </div>
+            {sourceCheck && (
+              <Alert
+                className="source-check-progress"
+                type={
+                  ["QUEUED", "RUNNING"].includes(sourceCheck.state)
+                    ? "info"
+                    : sourceCheck.warning
+                      ? "warning"
+                      : "success"
+                }
+                showIcon
+                message={
+                  ["QUEUED", "RUNNING"].includes(sourceCheck.state)
+                    ? `检查任务进行中 · ${sourceCheck.done}/${sourceCheck.total}${sourceCheck.stop_requested ? " · 正在停止" : ""}`
+                    : sourceCheck.summary
+                }
+                description={
+                  ["QUEUED", "RUNNING"].includes(sourceCheck.state) ? (
+                    <Progress
+                      percent={Math.round(
+                        (sourceCheck.done / (sourceCheck.total || 1)) * 100,
+                      )}
+                      size="small"
+                      status="active"
+                    />
+                  ) : undefined
+                }
+                action={
+                  <Button size="small" onClick={() => setSourceCheckOpen(true)}>
+                    查看明细
+                  </Button>
+                }
+              />
+            )}
             <Table
               rowKey="id"
-              rowSelection={selection("source")}
-              dataSource={sources.filter(
-                (s) =>
-                  s.name.toLowerCase().includes(search.toLowerCase()) &&
-                  (!sourceCategoryFilter ||
-                    s.category_id === sourceCategoryFilter) &&
-                  (!sourceTagFilter ||
-                    (s.tag_ids || []).includes(sourceTagFilter)),
-              )}
+              rowSelection={{ ...selection("source"), fixed: !!screens.lg }}
+              dataSource={visibleSources}
               pagination={{ pageSize: 12, showSizeChanger: false }}
               columns={[
                 {
                   title: "订阅范围",
+                  width: 250,
+                  fixed: screens.lg ? "left" : undefined,
                   render: (_, s) => (
                     <div>
                       <b>{s.name}</b>
@@ -1196,6 +1357,7 @@ function Workbench() {
                 {
                   title: "类型",
                   dataIndex: "type",
+                  width: 115,
                   render: (v) => (
                     <Tag>
                       {
@@ -1211,6 +1373,7 @@ function Workbench() {
                 },
                 {
                   title: "分类 / 标签",
+                  width: 190,
                   render: (_, s) => (
                     <div>
                       <span>{categoryName(s.category_id)}</span>
@@ -1226,6 +1389,7 @@ function Workbench() {
                 },
                 {
                   title: "网络",
+                  width: 100,
                   render: (_, s) => (
                     <Tag>
                       {s.proxy_mode === "direct"
@@ -1240,6 +1404,7 @@ function Workbench() {
                 },
                 {
                   title: "间隔",
+                  width: 92,
                   render: (_, s) =>
                     s.type === "webhook"
                       ? "事件触发"
@@ -1247,9 +1412,12 @@ function Workbench() {
                 },
                 {
                   title: "采集状态",
+                  width: 135,
                   render: (_, s) =>
                     !s.enabled ? (
                       <Tag>已暂停</Tag>
+                    ) : s.type === "webhook" ? (
+                      <Tag>事件触发</Tag>
                     ) : s.cooldown_until > Date.now() / 1000 ? (
                       <Tooltip title={when(s.cooldown_until)}>
                         <Tag color="orange">冷却中</Tag>
@@ -1266,10 +1434,13 @@ function Workbench() {
                 },
                 {
                   title: "最近检查",
+                  width: 170,
                   render: (_, s) => when(s.health.last_check),
                 },
                 {
                   title: "操作",
+                  width: 210,
+                  fixed: screens.lg ? "right" : undefined,
                   render: (_, s) => (
                     <Space>
                       <Button type="text" onClick={() => open("source", s)}>
@@ -1284,33 +1455,120 @@ function Workbench() {
                         删除
                       </Button>
                       {s.type !== "webhook" && (
-                        <Button
-                          type="text"
-                          aria-label={`检查订阅源 ${s.name}`}
-                          loading={
-                            !!operations.active[`check-${s.id}`] ||
-                            bulkChecking.includes(s.id)
-                          }
-                          onClick={() =>
-                            execute(
-                              () => api(`sources/${s.id}/poll`, "POST", {}),
-                              undefined,
-                              {
-                                key: `check-${s.id}`,
-                                label: `检查「${s.name}」`,
-                              },
-                            )
+                        <Tooltip
+                          title={
+                            s.enabled
+                              ? "正常采集，发现新事件时可能触发推送"
+                              : "先启用来源再检查"
                           }
                         >
-                          检查
-                        </Button>
+                          <Button
+                            type="text"
+                            aria-label={`检查订阅源 ${s.name}`}
+                            disabled={
+                              !s.enabled ||
+                              sourceCheckBusy
+                            }
+                            loading={!!operations.active[`check-${s.id}`]}
+                            onClick={() =>
+                              execute(
+                                () => api(`sources/${s.id}/poll`, "POST", {}),
+                                undefined,
+                                {
+                                  key: `check-${s.id}`,
+                                  label: `检查「${s.name}」`,
+                                },
+                              )
+                            }
+                          >
+                            检查
+                          </Button>
+                        </Tooltip>
                       )}
                     </Space>
                   ),
                 },
               ]}
-              scroll={{ x: 1000 }}
+              scroll={{ x: 1330 }}
             />
+            <Drawer
+              title="订阅源检查结果"
+              width={720}
+              open={sourceCheckOpen && !!sourceCheck}
+              onClose={() => setSourceCheckOpen(false)}
+            >
+              <Space wrap style={{ marginBottom: 16 }}>
+                <Select
+                  aria-label="检查任务记录"
+                  style={{ minWidth: 300, maxWidth: "100%" }}
+                  value={sourceCheckId}
+                  options={sourceChecks.map((batch) => ({
+                    value: batch.id,
+                    label: `${when(batch.created)} · ${batch.scope === "all" ? "全部" : "所选"} · ${batch.done}/${batch.total}`,
+                  }))}
+                  onChange={(key) => setSourceCheckId(key)}
+                />
+                {["QUEUED", "RUNNING"].includes(sourceCheck?.state) && !sourceCheck?.stop_requested && (
+                  <Button
+                    danger
+                    loading={!!operations.active["stop-source-check"]}
+                    onClick={async () => {
+                      const result = await execute(
+                        () => api(`source-checks/${sourceCheck.id}/stop`, "POST", {}),
+                        "已停止未开始的检查；已开始的检查会结束并记录结果",
+                        { key: "stop-source-check", label: "停止后续检查" },
+                      );
+                      if (result) setSourceCheck(result);
+                    }}
+                  >
+                    停止后续检查
+                  </Button>
+                )}
+              </Space>
+              <p>
+                {sourceCheck?.summary ||
+                  `已检查 ${sourceCheck?.done || 0}/${sourceCheck?.total || 0} 个来源`}
+              </p>
+              <Table
+                rowKey="id"
+                dataSource={sourceCheck?.rows || []}
+                pagination={{ pageSize: 20, showSizeChanger: false }}
+                columns={[
+                  { title: "订阅源", dataIndex: "name", width: 170 },
+                  {
+                    title: "结果",
+                    dataIndex: "state",
+                    width: 115,
+                    render: (state) => (
+                      <Tag color={SOURCE_CHECK_RESULTS[state]?.[1]}>
+                        {SOURCE_CHECK_RESULTS[state]?.[0] || state}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: "读取",
+                    dataIndex: "items",
+                    width: 65,
+                    render: (v) => v ?? "—",
+                  },
+                  {
+                    title: "新事件",
+                    dataIndex: "new_events",
+                    width: 85,
+                    render: (v) => v ?? "—",
+                  },
+                  {
+                    title: "详情",
+                    width: 260,
+                    render: (_, row) =>
+                      row.retry_at
+                        ? `${row.detail}；下次可检查：${when(row.retry_at)}`
+                        : row.detail || "—",
+                  },
+                ]}
+                scroll={{ x: 695 }}
+              />
+            </Drawer>
           </section>
         )}
         {tab === "subscriptions" && (
@@ -1483,6 +1741,9 @@ function Workbench() {
             />
           </section>
         )}
+        {tab === "conversations" && (
+          <ConversationPanel data={data} api={api} execute={execute} active={operations.active} />
+        )}
         {tab === "history" && (
           <section className="panel">
             <div className="table-tools">
@@ -1541,8 +1802,26 @@ function Workbench() {
                             ? workspaceName(r.workspace_id)
                             : botName(r.bot_id),
                       },
-                      { title: "状态", dataIndex: "state", render: badge },
+                      {
+                        title: "状态",
+                        dataIndex: "state",
+                        render: (value, row) =>
+                          historyKind === "jobs" &&
+                          value === "QUEUED" &&
+                          row.next_try > Date.now() / 1000 ? (
+                            <Tag color="orange">等待重试</Tag>
+                          ) : (
+                            badge(value)
+                          ),
+                      },
                       { title: "时间", dataIndex: "updated", render: when },
+                      {
+                        title: "下次尝试",
+                        dataIndex: "next_try",
+                        render: (value) =>
+                          value > Date.now() / 1000 ? when(value) : "—",
+                      },
+                      { title: "次数", dataIndex: "attempts", width: 68 },
                       { title: "原因", dataIndex: "error", ellipsis: true },
                       {
                         title: "产物",
@@ -1557,7 +1836,7 @@ function Workbench() {
                       },
                     ]
               }
-              scroll={{ x: 950 }}
+              scroll={{ x: 1130 }}
             />
           </section>
         )}
@@ -2312,6 +2591,29 @@ function Workbench() {
                   <p>向机器人发送一条消息，等待接收会话出现。</p>
                 )}
               </div>
+              {(b.type === "weixin" || b.type === "telegram") && (
+                <div className="detail-block">
+                  <span>对话模型</span>
+                  <Select
+                    aria-label="机器人对话模型"
+                    allowClear
+                    placeholder="沿用工作区或默认对话模型"
+                    value={b.conversation_model_id || undefined}
+                    options={models.map((m) => ({ value: m.id, label: m.name }))}
+                    style={{ width: "100%" }}
+                    onChange={(conversation_model_id) =>
+                      execute(
+                        () => api(`bots/${b.id}/update`, "POST", {
+                          revision: b.revision,
+                          conversation_model_id: conversation_model_id || null,
+                        }),
+                        "机器人对话模型已更新",
+                        { key: `bot-chat-model-${b.id}`, label: "保存机器人对话模型" },
+                      )
+                    }
+                  />
+                </div>
+              )}
               {b.type !== "weixin" && (
                 <Collapse
                   ghost

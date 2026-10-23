@@ -39,6 +39,14 @@ export default function WorkspacePanel({
   const [renameTarget, setRenameTarget] = useState(null);
   const loadedId = useRef(null);
   const { workspaces, bots, subscriptions, models } = data;
+  const settings = (w) => ({
+    name: w.name,
+    model_id: w.model_id || undefined,
+    conversation_model_id: w.conversation_model_id || undefined,
+    conversation_prompt: w.conversation_profile?.prompt || "",
+    web_search_enabled: !!w.conversation_profile?.web_search_enabled,
+    ...w.ai_profile,
+  });
   useEffect(() => {
     setChecked((ids) =>
       ids.filter((id) => workspaces.some((w) => w.id === id)),
@@ -54,11 +62,7 @@ export default function WorkspacePanel({
     ) {
       if (loadedId.current !== workspace.id) setDirty(false);
       loadedId.current = workspace.id;
-      form.setFieldsValue({
-        name: workspace.name,
-        model_id: workspace.model_id || undefined,
-        ...workspace.ai_profile,
-      });
+      form.setFieldsValue(settings(workspace));
       setLoadedRevision(workspace.revision);
     }
   }, [workspace?.id, workspace?.revision, dirty]);
@@ -80,24 +84,22 @@ export default function WorkspacePanel({
   const attached = bots.filter((b) => b.workspace_id === workspace.id);
   const bindings = subscriptions.filter((s) => s.workspace_id === workspace.id);
   const save = async (values) => {
-    const { name, model_id, ...ai_profile } = values;
+    const { name, model_id, conversation_model_id, conversation_prompt, web_search_enabled, ...ai_profile } = values;
     const result = await execute(
       () =>
         api(`workspaces/${workspace.id}/settings`, "POST", {
           revision: loadedRevision,
           name,
           model_id: model_id || null,
+          conversation_model_id: conversation_model_id || null,
+          conversation_profile: { prompt: conversation_prompt || "", web_search_enabled: !!web_search_enabled },
           ai_profile,
         }),
       "工作区配置已保存，新入队任务将使用这套规则。",
       { key: `workspace-save-${workspace.id}`, label: `保存工作区「${name}」` },
     );
     if (result) {
-      form.setFieldsValue({
-        name: result.name,
-        model_id: result.model_id || undefined,
-        ...result.ai_profile,
-      });
+      form.setFieldsValue(settings(result));
       setLoadedRevision(result.revision);
       setDirty(false);
     }
@@ -220,11 +222,7 @@ export default function WorkspacePanel({
                         <Button
                           size="small"
                           onClick={() => {
-                            form.setFieldsValue({
-                              name: workspace.name,
-                              model_id: workspace.model_id || undefined,
-                              ...workspace.ai_profile,
-                            });
+                            form.setFieldsValue(settings(workspace));
                             setLoadedRevision(workspace.revision);
                             setDirty(false);
                           }}
@@ -320,6 +318,18 @@ export default function WorkspacePanel({
                       extra="原工作区中自定义的其他要求会迁入这里，可直接修改。"
                     >
                       <Input.TextArea rows={3} maxLength={81000} showCount />
+                    </Form.Item>
+                    <div className="panel-title"><h2>对话 Agent</h2></div>
+                    <div className="profile-grid">
+                      <Form.Item name="conversation_model_id" label="对话模型">
+                        <Select allowClear placeholder="使用默认对话模型" options={models.map((m) => ({ value: m.id, label: m.name }))} />
+                      </Form.Item>
+                      <Form.Item name="web_search_enabled" label="允许实时检索" valuePropName="checked" extra="仅在全局检索服务已配置时生效。">
+                        <Checkbox />
+                      </Form.Item>
+                    </div>
+                    <Form.Item name="conversation_prompt" label="对话风格与边界" extra="仅作用于本工作区的问答，不影响订阅整理。">
+                      <Input.TextArea rows={3} maxLength={8000} showCount />
                     </Form.Item>
                     <div className="profile-save">
                       <span>

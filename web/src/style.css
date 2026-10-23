@@ -244,6 +244,17 @@ header p {
   font-size: 13px;
   color: #7a847e;
 }
+.source-tools {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 12px;
+}
+.source-tools > span {
+  margin-right: auto;
+}
+.source-check-progress {
+  margin-bottom: 16px;
+}
 .ant-table-cell small {
   max-width: 420px;
   overflow-wrap: anywhere;

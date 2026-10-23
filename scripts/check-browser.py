@@ -6,6 +6,7 @@ import secrets
 import select as io_select
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -22,7 +23,8 @@ out.mkdir(parents=True, exist_ok=True)
 instance = out / ("ui-instance-" + str(int(time.time())))
 (instance / "web").mkdir(parents=True)
 (instance / "docs").mkdir()
-shutil.copytree(root / "web/dist", instance / "web/dist")
+assets = Path(os.environ.get("WORKBENCH_BROWSER_DIST", root / "web/dist")).resolve()
+shutil.copytree(assets, instance / "web/dist")
 shutil.copyfile(root / "docs/imported-sources.json", instance / "docs/imported-sources.json")
 
 
@@ -356,6 +358,32 @@ try:
         results["artifact_view"] = True
         page.screenshot(path=str(out / "artifact.png"), full_page=True)
         page.locator(".ant-drawer-open .ant-drawer-close").click()
+        database = instance / "state/workbench.sqlite3"
+        with sqlite3.connect(database) as conn:
+            job_id, old_state, old_retry, old_error = conn.execute(
+                "SELECT id,state,next_try,error FROM jobs ORDER BY created DESC LIMIT 1"
+            ).fetchone()
+            conn.execute(
+                "UPDATE jobs SET state='QUEUED',next_try=?,error=? WHERE id=?",
+                (time.time() + 180, "Site HTTP cooldown", job_id),
+            )
+        try:
+            page.get_by_role("tab", name="处理任务").click()
+            expect(page.get_by_role("tab", name="处理任务")).to_have_attribute(
+                "aria-selected", "true"
+            )
+            expect(page.get_by_text("等待重试", exact=True)).to_be_visible()
+            expect(page.get_by_role("columnheader", name="下次尝试")).to_be_visible()
+            expect(page.locator(".ant-table-tbody")).to_contain_text("Site HTTP cooldown")
+            page.wait_for_timeout(350)
+            page.screenshot(path=str(out / "deferred-job.png"), full_page=True)
+            results["deferred_job_history"] = True
+        finally:
+            with sqlite3.connect(database) as conn:
+                conn.execute(
+                    "UPDATE jobs SET state=?,next_try=?,error=? WHERE id=?",
+                    (old_state, old_retry, old_error, job_id),
+                )
         nav("工作区")
         page.screenshot(path=str(out / "workspaces.png"), full_page=True)
         original_path = bots[0]["workspace_path"]
@@ -390,7 +418,9 @@ try:
             "版本发布工作区"
         )
         page.get_by_role("button", name="保存工作区设置", exact=True).click()
-        page.get_by_text("工作区配置已保存，新入队任务将使用这套规则。", exact=True).wait_for()
+        page.get_by_text(
+            "工作区配置已保存，新入队任务将使用这套规则。", exact=True
+        ).first.wait_for()
         current = page.request.get("http://127.0.0.1:6191/api/overview").json()
         shared = next(w for w in current["workspaces"] if w["id"] == bots[0]["workspace_id"])
         assert shared["ai_profile"]["focus_prompt"] == "关注软件版本发布和兼容性变化"
@@ -406,6 +436,48 @@ try:
         assert len({w["ai_profile"]["focus_prompt"] for w in current["workspaces"]}) == 2
         results["independent_workspace_profiles"] = True
         headers = {"X-Requested-With": "workbench"}
+        dialog_model = page.request.post(
+            "http://127.0.0.1:6191/api/models",
+            headers=headers,
+            data={
+                "name": "Conversation QA",
+                "model": "qa-model",
+                "base_url": "http://127.0.0.1:" + str(server.server_port),
+            },
+        ).json()
+        nav("对话")
+        page.get_by_role("combobox", name="默认对话模型").click()
+        page.locator(".ant-select-dropdown:visible").get_by_text(
+            "Conversation QA", exact=True
+        ).click()
+        page.get_by_text("默认对话模型已更新", exact=True).wait_for()
+        page.get_by_role("combobox", name="默认对话模型").press("Escape")
+        page.get_by_label("SearXNG 地址", exact=True).fill(
+            "http://127.0.0.1:" + str(server.server_port)
+        )
+        page.get_by_role("switch", name="启用实时检索").click()
+        expect(page.get_by_role("switch", name="启用实时检索")).to_be_checked()
+        page.get_by_role("button", name="保存检索配置", exact=True).click()
+        page.get_by_text("检索配置已保存", exact=True).wait_for()
+        nav("工作区")
+        page.locator(".workspace-option button").filter(has_text="版本发布工作区").click()
+        page.get_by_label("对话风格与边界", exact=True).fill("只解释当前目标的推送")
+        page.get_by_label("允许实时检索", exact=True).check()
+        page.get_by_role("button", name="保存工作区设置", exact=True).click()
+        page.get_by_text(
+            "工作区配置已保存，新入队任务将使用这套规则。", exact=True
+        ).first.wait_for()
+        configured = page.request.get("http://127.0.0.1:6191/api/overview").json()
+        workspace = next(w for w in configured["workspaces"] if w["id"] == bots[0]["workspace_id"])
+        assert configured["conversation_model_id"] == dialog_model["id"]
+        assert workspace["conversation_profile"] == {
+            "prompt": "只解释当前目标的推送",
+            "web_search_enabled": True,
+        }
+        nav("对话")
+        expect(page.get_by_text("入站与回复", exact=True)).to_be_visible()
+        page.screenshot(path=str(out / "conversations.png"), full_page=True)
+        results["conversation_configuration"] = True
         slow = page.request.post(
             "http://127.0.0.1:6191/api/sources",
             headers=headers,
@@ -436,6 +508,60 @@ try:
         expect(page.locator(".operation-list")).to_contain_text("Slow feedback feed")
         page.get_by_role("button", name="操作记录", exact=True).click()
         results["operation_history_across_pages"] = True
+        nav("订阅源")
+        configured_sources = page.request.get("http://127.0.0.1:6191/api/overview").json()[
+            "sources"
+        ]
+        external = [
+            {"id": source["id"], "revision": source["revision"]}
+            for source in configured_sources
+            if source["enabled"] and source["type"] != "webhook" and source["id"] != slow["id"]
+        ]
+        if external:
+            pause = page.request.post(
+                "http://127.0.0.1:6191/api/manage/apply",
+                headers=headers,
+                data={"kind": "source", "action": "disable", "items": external},
+            )
+            assert pause.ok, pause.text()
+        page.get_by_role("button", name="刷新", exact=True).click()
+        expect(page.get_by_role("button", name="检查全部", exact=True)).to_be_enabled()
+        page.get_by_role("button", name="检查全部", exact=True).click()
+        confirmation = page.get_by_role("dialog", name="检查全部订阅源？")
+        expect(confirmation).to_contain_text("可能触发整理和真实推送")
+        expect(confirmation).to_contain_text("将检查 1 个")
+        confirmation.get_by_role("button", name="开始检查").click()
+        page.get_by_text("检查任务已创建，离开页面后仍会继续", exact=True).wait_for()
+        nav("模型")
+        page.reload(wait_until="networkidle")
+        nav("订阅源")
+        page.locator(".source-check-progress").get_by_text("已检查 1 个来源", exact=False).wait_for(
+            timeout=30000
+        )
+        batches = page.request.get("http://127.0.0.1:6191/api/source-checks").json()["batches"]
+        assert len(batches) == 1 and batches[0]["state"] == "COMPLETED"
+        assert batches[0]["total"] == 1 and batches[0]["skipped"] == len(configured_sources) - 1
+        assert batches[0]["counts"] == {"DEFERRED": 1}
+        page.get_by_role("button", name="查看明细").click()
+        details = page.get_by_role("dialog", name="订阅源检查结果")
+        expect(details).to_contain_text("Slow feedback feed")
+        page.screenshot(path=str(out / "sources-bulk.png"), full_page=True)
+        expect(details).to_contain_text("间隔/冷却")
+        details.locator(".ant-drawer-close").click()
+        page.get_by_placeholder("搜索来源").fill("")
+        page.get_by_role("combobox", name="来源状态").click()
+        page.locator(".ant-select-dropdown:visible").get_by_text("Webhook 事件", exact=True).click()
+        webhooks = [
+            source
+            for source in page.request.get("http://127.0.0.1:6191/api/overview").json()["sources"]
+            if source["enabled"] and source["type"] == "webhook"
+        ]
+        assert webhooks
+        expect(page.locator("main .panel .ant-table-tbody tr.ant-table-row")).to_have_count(
+            min(len(webhooks), 12)
+        )
+        page.locator(".source-tools .ant-select").nth(2).locator(".ant-select-clear").click()
+        results["check_all_persists_after_reload_and_skips_ineligible"] = True
         for name in ("Batch source A", "Batch source B"):
             response = page.request.post(
                 "http://127.0.0.1:6191/api/sources",
@@ -514,6 +640,16 @@ try:
         page.get_by_role("dialog").locator(".ant-modal-close").click()
         expect(page.get_by_role("dialog")).to_have_count(0)
         results["telegram_inherits_global_proxy_without_bot_switch"] = True
+        page.set_viewport_size({"width": 390, "height": 844})
+        nav("订阅源")
+        page.wait_for_timeout(250)
+        page.locator(".ant-notification-notice-close").evaluate_all(
+            "(buttons) => buttons.forEach((button) => button.click())"
+        )
+        page.screenshot(path=str(out / "sources-mobile.png"), full_page=True)
+        assert page.locator("body").evaluate("(e)=>e.scrollWidth<=window.innerWidth")
+        assert page.locator("main .ant-table-cell-fix-left").count() == 0
+        results["source_mobile_unpinned"] = True
         page.set_viewport_size({"width": 500, "height": 900})
         nav("订阅广场")
         page.locator(".ant-notification-notice-close").evaluate_all(
@@ -533,6 +669,10 @@ try:
         )
         assert "沙盒" not in page.locator("body").inner_text()
         assert "客户工作区" not in page.locator("body").inner_text()
+        page.context.clear_cookies()
+        expect(page.get_by_role("heading", name="登录订阅推送工作台")).to_be_visible(timeout=10000)
+        assert page.get_by_role("heading", name="运行概览", exact=True).count() == 0
+        results["expired_session_clears_stale_data_and_returns_to_login"] = True
         browser.close()
     (out / "browser.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"

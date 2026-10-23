@@ -10,6 +10,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
+from .network import RedirectResponse
+
 
 class DeferredRequest(Exception):
     def __init__(self, reason, retry_at, status=None):
@@ -72,7 +74,8 @@ class RequestPolicy:
 
     @staticmethod
     def site(source):
-        return urlsplit(source["url"]).hostname.removeprefix("www.")
+        url = source["url"] if isinstance(source, dict) else source
+        return urlsplit(url).hostname.removeprefix("www.")
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,12 +121,13 @@ class RequestPolicy:
             self._save()
 
     def fetch(self, url, source, operation):
+        site_key = self.site(url)
         with self.lock:
-            site_lock = self.site_locks.setdefault(self.site(source), threading.Lock())
+            site_lock = self.site_locks.setdefault(site_key, threading.Lock())
         # Only this site's requests serialize; independent sites may proceed concurrently.
         with site_lock:
             with self.lock:
-                site = self._site(source)
+                site = self.state["sites"].setdefault(site_key, {})
                 now = self.clock()
                 if site.get("cooldown_until", 0) > now:
                     raise DeferredRequest(
@@ -181,7 +185,7 @@ class RequestPolicy:
                 ) from exc
             with self.lock:
                 site.update(
-                    status=200,
+                    status=result.status if isinstance(result, RedirectResponse) else 200,
                     failures=0,
                     cooldown_until=0,
                     last_success_at=self.clock(),

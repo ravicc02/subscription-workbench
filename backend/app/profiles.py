@@ -12,6 +12,20 @@ FIELDS = {
 }
 
 
+def conversation_profile_for(workspace):
+    return {"prompt": "", "web_search_enabled": False, **workspace.get("conversation_profile", {})}
+
+
+def validate_conversation_profile(value):
+    if not isinstance(value, dict) or set(value) - {"prompt", "web_search_enabled"}:
+        raise ValueError("对话配置字段无效")
+    prompt = value.get("prompt", "")
+    enabled = value.get("web_search_enabled", False)
+    if not isinstance(prompt, str) or len(prompt) > 8000 or type(enabled) is not bool:
+        raise ValueError("对话配置格式无效")
+    return {"prompt": prompt, "web_search_enabled": enabled}
+
+
 def profile_for(workspace, paths):
     if isinstance(workspace.get("ai_profile"), dict):
         return {k: workspace["ai_profile"].get(k, "") for k in FIELDS}

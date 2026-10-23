@@ -228,6 +228,22 @@ def create_app(root=None, worker=True, network=None):
     async def source_poll(key: str):
         return await w.poll(key)
 
+    @app.get("/api/source-checks")
+    async def source_checks(limit: int = 10):
+        return w.list_source_checks(limit)
+
+    @app.post("/api/source-checks")
+    async def create_source_check(req: Request):
+        return w.create_source_check(await body(req))
+
+    @app.get("/api/source-checks/{key}")
+    async def source_check(key: str):
+        return w.source_check(key)
+
+    @app.post("/api/source-checks/{key}/stop")
+    async def stop_source_check(key: str):
+        return w.stop_source_check(key)
+
     @app.post("/api/subscriptions")
     async def subscription_save(req: Request):
         return w.save_subscription(await body(req))
@@ -258,15 +274,14 @@ def create_app(root=None, worker=True, network=None):
         impact = w.preview_package(manifest)
         if impact["conflicts"]:
             raise Conflict("来源分类冲突，请先调整后导入")
-        existing = {
-            (s["type"], canonical(s["url"]))
-            for s in w.store.all("source") if s.get("url")
-        }
+        existing = {(s["type"], canonical(s["url"])) for s in w.store.all("source") if s.get("url")}
         for category in manifest["categories"]:
             for source in category["sources"]:
                 identity = (source["type"], canonical(source["url"]))
                 if identity not in existing:
-                    await asyncio.to_thread(w.net.destination, source["url"], w.effective_proxy(source))
+                    await asyncio.to_thread(
+                        w.net.destination, source["url"], w.effective_proxy(source)
+                    )
         return w.import_package(manifest)
 
     @app.post("/api/packages/export")
@@ -343,6 +358,16 @@ def create_app(root=None, worker=True, network=None):
         w.store.audit("model", key, "TOOLS_VERIFIED" if valid else "TOOLS_UNAVAILABLE")
         return {"tool_calling": valid, "usage": r.get("usage", {})}
 
+    @app.post("/api/models/roles")
+    async def model_roles(req: Request):
+        data = await body(req)
+        key = data.get("conversation_model_id")
+        if key is not None:
+            w.store.get("model", key)
+        w.store.set_setting("conversation_model_id", key)
+        w.store.audit("model", "roles", "SAVED", {"conversation_model_id": key})
+        return {"conversation_model_id": key}
+
     @app.get("/api/network")
     async def network_settings():
         return w.proxy_preferences()
@@ -354,6 +379,19 @@ def create_app(root=None, worker=True, network=None):
     @app.post("/api/network/test")
     async def network_test(req: Request):
         return await w.test_proxy(await body(req))
+
+    @app.get("/api/search")
+    async def search_settings():
+        return w.search_preferences()
+
+    @app.post("/api/search")
+    async def search_save(req: Request):
+        data = await body(req)
+        if data.get("provider") == "searxng" and (data.get("base_url") or data.get("enabled")):
+            await asyncio.to_thread(
+                w.net.destination, str(data.get("base_url") or ""), w.search_proxy()
+            )
+        return w.save_search_preferences(data)
 
     @app.post("/api/manage/{mode}")
     async def manage(mode: str, req: Request):
@@ -437,7 +475,7 @@ def create_app(root=None, worker=True, network=None):
         bot_id: str = "",
         q: str = "",
     ):
-        if kind not in ("deliveries", "jobs", "audit"):
+        if kind not in ("deliveries", "jobs", "audit", "inbound_messages"):
             raise ValueError("Unknown history type")
         if not 1 <= page <= 100000:
             raise ValueError("Invalid page")
@@ -446,7 +484,7 @@ def create_app(root=None, worker=True, network=None):
         if state:
             clauses.append("state=?")
             args.append(state)
-        if bot_id and kind == "deliveries":
+        if bot_id and kind in ("deliveries", "inbound_messages"):
             clauses.append("bot_id=?")
             args.append(bot_id)
         if q:

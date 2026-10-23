@@ -61,14 +61,24 @@ class Store:
         CREATE TABLE IF NOT EXISTS feed_state(source_id TEXT PRIMARY KEY,baseline INTEGER DEFAULT 0,next_poll REAL DEFAULT 0,last_check REAL,error TEXT);
         CREATE TABLE IF NOT EXISTS seen(source_id TEXT,item_key TEXT,version TEXT,PRIMARY KEY(source_id,item_key));
         CREATE TABLE IF NOT EXISTS inputs(id TEXT PRIMARY KEY,source_id TEXT,item_key TEXT,version TEXT,payload TEXT,created REAL,UNIQUE(source_id,item_key,version));
-        CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,event_id TEXT,workspace_id TEXT,config_hash TEXT,snapshot TEXT,state TEXT,attempts INTEGER DEFAULT 0,error TEXT,paths TEXT,created REAL,updated REAL,UNIQUE(event_id,workspace_id,config_hash));
+        CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,event_id TEXT,workspace_id TEXT,config_hash TEXT,snapshot TEXT,state TEXT,attempts INTEGER DEFAULT 0,next_try REAL DEFAULT 0,error TEXT,paths TEXT,created REAL,updated REAL,UNIQUE(event_id,workspace_id,config_hash));
         CREATE TABLE IF NOT EXISTS deliveries(id TEXT PRIMARY KEY,job_id TEXT,bot_id TEXT,target TEXT,binding_revision INTEGER,state TEXT,attempts INTEGER DEFAULT 0,part_index INTEGER DEFAULT 0,receipts TEXT DEFAULT '[]',next_try REAL DEFAULT 0,error TEXT,created REAL,updated REAL,UNIQUE(job_id,bot_id,target));
+        CREATE TABLE IF NOT EXISTS inbound_messages(id TEXT PRIMARY KEY,bot_id TEXT,platform_id TEXT,target TEXT,sender TEXT,conversation_id TEXT,binding_revision INTEGER,text TEXT,state TEXT,attempts INTEGER DEFAULT 0,next_try REAL DEFAULT 0,response TEXT,model_id TEXT,receipt TEXT,tool_trace TEXT DEFAULT '[]',error TEXT,created REAL,updated REAL,UNIQUE(bot_id,platform_id));
+        CREATE TABLE IF NOT EXISTS source_check_batches(id TEXT PRIMARY KEY,scope TEXT,state TEXT,stop_requested INTEGER DEFAULT 0,total INTEGER,skipped INTEGER DEFAULT 0,created REAL,updated REAL);
+        CREATE TABLE IF NOT EXISTS source_check_items(batch_id TEXT,ordinal INTEGER,source_id TEXT,source_name TEXT,source_revision INTEGER,state TEXT DEFAULT 'QUEUED',items INTEGER,new_events INTEGER,retry_at REAL,detail TEXT,updated REAL,PRIMARY KEY(batch_id,ordinal));
         CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,object_id TEXT,state TEXT,detail TEXT,created REAL);
         CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state,created);
         CREATE INDEX IF NOT EXISTS deliveries_pending ON deliveries(state,next_try);
+        CREATE INDEX IF NOT EXISTS inbound_ready ON inbound_messages(state,next_try,created);
+        CREATE INDEX IF NOT EXISTS inbound_conversation ON inbound_messages(conversation_id,created);
+        CREATE INDEX IF NOT EXISTS source_check_queue ON source_check_batches(state,created);
+        CREATE INDEX IF NOT EXISTS source_check_items_queue ON source_check_items(batch_id,state,ordinal);
         """)
         self.db.execute("BEGIN IMMEDIATE")
         try:
+            if not any(row[1] == "next_try" for row in self.db.execute("PRAGMA table_info(jobs)")):
+                self.db.execute("ALTER TABLE jobs ADD COLUMN next_try REAL DEFAULT 0")
+            self.db.execute("CREATE INDEX IF NOT EXISTS jobs_due ON jobs(state,next_try,created)")
             had_memberships = self.db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_subscriptions'"
             ).fetchone()
@@ -79,9 +89,12 @@ class Store:
             if not had_memberships:
                 for row in self.db.execute("SELECT id,snapshot FROM jobs"):
                     sub = json.loads(row["snapshot"]).get("subscription_id")
-                    if sub and self.db.execute(
-                        "SELECT 1 FROM objects WHERE kind='subscription' AND id=?", (sub,)
-                    ).fetchone():
+                    if (
+                        sub
+                        and self.db.execute(
+                            "SELECT 1 FROM objects WHERE kind='subscription' AND id=?", (sub,)
+                        ).fetchone()
+                    ):
                         self.db.execute(
                             "INSERT OR IGNORE INTO job_subscriptions VALUES(?,?)", (row["id"], sub)
                         )
@@ -96,10 +109,24 @@ class Store:
 
     def recover(self):
         self.db.execute(
-            "UPDATE jobs SET state='QUEUED',error='Process interrupted before completion' WHERE state='RUNNING'"
+            "UPDATE source_check_items SET state='INTERRUPTED',detail='服务中断，采集可能已提交；未自动重试',updated=? WHERE state='RUNNING'",
+            (time.time(),),
+        )
+        self.db.execute(
+            "UPDATE source_check_batches SET state='QUEUED',updated=? WHERE state='RUNNING'",
+            (time.time(),),
+        )
+        self.db.execute(
+            "UPDATE jobs SET state='QUEUED',next_try=0,error='Process interrupted before completion' WHERE state='RUNNING'"
         )
         self.db.execute(
             "UPDATE deliveries SET state='UNKNOWN',error='Process interrupted during send; no automatic resend' WHERE state='SENDING'"
+        )
+        self.db.execute(
+            "UPDATE inbound_messages SET state='QUEUED',error='Processing interrupted' WHERE state='RUNNING'"
+        )
+        self.db.execute(
+            "UPDATE inbound_messages SET state='UNKNOWN',error='Reply interrupted during send; no automatic resend' WHERE state='SENDING'"
         )
 
     def seal(self, v):
