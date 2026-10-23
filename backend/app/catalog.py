@@ -225,8 +225,8 @@ class Catalog:
         self.validate_package(manifest)
         existing_categories = {c["key"]: c for c in self.store.all("category")}
         existing_sources = {source_identity(s): s for s in self.store.all("source") if s.get("url")}
-        existing_tags = {(t["category_id"], t["key"]) for t in self.store.all("tag")}
-        counts = {"categories_new": 0, "tags_new": 0, "sources_new": 0, "sources_existing": 0, "conflicts": []}
+        existing_tags = {(t["category_id"], t["key"]): t["id"] for t in self.store.all("tag")}
+        counts = {"categories_new": 0, "tags_new": 0, "sources_new": 0, "sources_updated": 0, "sources_existing": 0, "conflicts": []}
         for category in manifest["categories"]:
             local = existing_categories.get(category["key"])
             if not local:
@@ -240,6 +240,11 @@ class Catalog:
                     counts["sources_new"] += 1
                 elif found.get("category_id") and (not local or found["category_id"] != local["id"]):
                     counts["conflicts"].append(source["name"])
+                elif not local or found.get("category_id") != local["id"] or any(
+                    existing_tags.get((local["id"], key)) not in (found.get("tag_ids") or [])
+                    for key in source["tags"]
+                ):
+                    counts["sources_updated"] += 1
                 else:
                     counts["sources_existing"] += 1
         return counts

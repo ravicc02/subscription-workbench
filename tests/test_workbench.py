@@ -1683,7 +1683,7 @@ def test_builtin_packages_validate_and_export_is_portable(wb):
     assert w.validate_package(result) == result
 
 
-def test_package_api_import_is_additive_and_does_not_create_subscription(wb, monkeypatch):
+def test_package_api_import_is_additive_and_does_not_create_subscription(wb, server, monkeypatch):
     c, w = wb
     checked = []
     monkeypatch.setattr(w.net, "destination", lambda url, proxy=None: checked.append(url))
@@ -1702,6 +1702,27 @@ def test_package_api_import_is_additive_and_does_not_create_subscription(wb, mon
     assert len(w.store.all("source")) == 1 and not w.store.all("subscription")
     source = w.store.all("source")[0]
     assert source["type"] == "api" and source["title_field"] == "headline"
+    category = w.store.all("category")[0]
+    tag = next(t for t in w.store.all("tag") if t["key"] == "alpha")
+    w.save_source({**source, "tag_ids": []}, network_checked=True)
+    assert post(c, "packages/preview", {"manifest": manifest})["sources_updated"] == 1
+    assert post(c, "packages/import", {"manifest": manifest})["sources_updated"] == 1
+    assert post(c, "packages/preview", {"manifest": manifest})["sources_existing"] == 1
+    assert post(c, "packages/preview", {"manifest": manifest})["sources_updated"] == 0
+    receiver = bot(c, server)
+    subscription = post(
+        c,
+        "subscriptions",
+        {
+            "name": "Imported research",
+            "workspace_id": receiver["workspace_id"],
+            "category_id": category["id"],
+            "tag_ids": [tag["id"]],
+            "source_ids": [],
+            "mode": "forward",
+        },
+    )
+    assert subscription["resolved_source_ids"] == [source["id"]]
 
 
 def test_package_import_checks_all_new_urls_before_mutating(wb, monkeypatch):

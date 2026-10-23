@@ -215,7 +215,45 @@ try:
         )
         results["named_shared_workspace_creation"] = True
         page.screenshot(path=str(out / "bots.png"), full_page=True)
+        nav("订阅广场")
+        finance = page.locator(".plaza-item").filter(has_text="金融市场")
+        expect(finance).to_have_count(1)
+        expect(finance.locator(".plaza-metrics strong")).to_have_count(0)
+        expect(finance.get_by_text("GoldSeek", exact=True)).not_to_be_visible()
+        page.locator(".ant-notification-notice-close").evaluate_all(
+            "(buttons) => buttons.forEach((button) => button.click())"
+        )
+        expect(page.locator(".ant-notification-notice")).to_have_count(0)
+        page.screenshot(path=str(out / "plaza-compact.png"), full_page=True)
+        finance.get_by_text("来源明细（6）", exact=True).click()
+        expect(finance.get_by_text("GoldSeek", exact=True)).to_be_visible()
+        page.wait_for_timeout(350)
+        page.screenshot(path=str(out / "plaza-expanded.png"), full_page=True)
+        finance.get_by_text("来源明细（6）", exact=True).click()
+        expect(finance.get_by_text("GoldSeek", exact=True)).not_to_be_visible()
+        results["plaza_compact_and_collapsible_sources"] = True
+        action = finance.locator(".plaza-item-head button")
+        expect(action).to_have_text("导入本地")
+        action.click()
+        page.locator(".ant-modal-confirm").get_by_role("button", name="同步到本地").click()
+        page.get_by_role("dialog").get_by_text("订阅配置", exact=True).wait_for()
+        expect(page.get_by_role("dialog").get_by_text("金融", exact=True)).to_be_visible()
+        assert not page.request.get("http://127.0.0.1:6191/api/overview").json()["subscriptions"]
+        page.get_by_role("dialog").get_by_role("button", name="取消", exact=True).click()
+        nav("订阅广场")
+        finance = page.locator(".plaza-item").filter(has_text="金融市场")
+        action = finance.locator(".plaza-item-head button")
+        expect(action).to_have_text("创建订阅")
+        action.click()
+        page.get_by_role("dialog").get_by_text("订阅配置", exact=True).wait_for()
+        expect(page.get_by_role("dialog").get_by_text("金融", exact=True)).to_be_visible()
+        multiselect("标签（多选）", "黄金 · 1 个来源")
+        expect(page.get_by_text("匹配 1 个来源，其中 1 个已启用")).to_be_visible()
+        page.get_by_role("dialog").get_by_role("button", name="取消", exact=True).click()
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        results["package_import_direct_subscription_and_ready_shortcut"] = True
         nav("订阅源")
+        page.evaluate("window.scrollTo(0, 0)")
         page.get_by_role("button", name="新增订阅源", exact=True).click()
         page.get_by_label("订阅源名称", exact=True).fill("UI Release Events")
         select("订阅源类型", "Webhook 外部事件")
@@ -477,6 +515,17 @@ try:
         expect(page.get_by_role("dialog")).to_have_count(0)
         results["telegram_inherits_global_proxy_without_bot_switch"] = True
         page.set_viewport_size({"width": 500, "height": 900})
+        nav("订阅广场")
+        page.locator(".ant-notification-notice-close").evaluate_all(
+            "(buttons) => buttons.forEach((button) => button.click())"
+        )
+        expect(page.locator(".ant-notification-notice")).to_have_count(0)
+        page.screenshot(path=str(out / "plaza-mobile.png"), full_page=True)
+        assert page.locator("body").evaluate("(e)=>e.scrollWidth<=window.innerWidth")
+        page.get_by_text("来源明细（6）", exact=True).click()
+        expect(page.get_by_text("GoldSeek", exact=True)).to_be_visible()
+        assert page.locator("body").evaluate("(e)=>e.scrollWidth<=window.innerWidth")
+        results["plaza_mobile_collapse"] = True
         nav("运行概览")
         page.screenshot(path=str(out / "mobile.png"), full_page=True)
         results["responsive_layout"] = page.locator("body").evaluate(

@@ -4,7 +4,7 @@
   "package": {
     "key": "finance",
     "name": "金融市场",
-    "description": "贵金属、能源、外汇与主要央行动态。导入只同步来源，需自行选择工作区和标签建立订阅。"
+    "description": "贵金属、能源、外汇与主要央行动态。"
   },
   "categories": [
     {

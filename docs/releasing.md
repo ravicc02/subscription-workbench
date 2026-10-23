@@ -25,16 +25,16 @@ pnpm --dir web build
 
 ```powershell
 git status --short
-git tag -a v0.3.4 -m "Release v0.3.4"
-git push origin v0.3.4
+git tag -a v0.3.5 -m "Release v0.3.5"
+git push origin v0.3.5
 ```
 
-标签示例仅用于当前 `0.3.4` 版本；后续先升版本，再按实际版本创建新标签。不要移动已发布的标签，也不要把 `state/`、`workspaces/`、`logs/`、`runs/`、`.env*` 或 `vault.key` 加入源码。
+标签示例仅用于当前 `0.3.5` 版本；后续先升版本，再按实际版本创建新标签。不要移动已发布的标签，也不要把 `state/`、`workspaces/`、`logs/`、`runs/`、`.env*` 或 `vault.key` 加入源码。
 
 本地可预检发布包：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\build-release.py --tag v0.3.4
+.\.venv\Scripts\python.exe scripts\build-release.py --tag v0.3.5
 ```
 
 ## 部署与回滚

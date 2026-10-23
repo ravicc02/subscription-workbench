@@ -368,6 +368,17 @@ function Workbench() {
           },
     );
   };
+  const subscribeFromPackage = async (manifest) => {
+    const current = await refresh(true);
+    if (!current) return;
+    const category =
+      manifest.categories.length === 1
+        ? current.categories.find((item) => item.key === manifest.categories[0].key)
+        : null;
+    setTab("subscriptions");
+    open("subscription");
+    if (category) form.setFieldsValue({ category_id: category.id, tag_ids: [] });
+  };
   const artifactOpen = async (job, kind = "report") => {
     const v = await execute(() => api(`artifacts/${job}?kind=${kind}`));
     if (v) setArtifact({ ...v, job, kind });
@@ -1114,6 +1125,7 @@ function Workbench() {
             api={api}
             execute={execute}
             active={operations.active}
+            onSubscribe={subscribeFromPackage}
           />
         )}
         {tab === "sources" && (

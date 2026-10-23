@@ -3,6 +3,7 @@ import {
   App,
   Alert,
   Button,
+  Collapse,
   Empty,
   Form,
   Input,
@@ -14,12 +15,19 @@ import {
 import {
   DownloadOutlined,
   ImportOutlined,
+  PlusOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 
 const types = { rss: "RSS / Atom", webpage: "网页", api: "JSON API" };
 
-export default function SubscriptionPlaza({ data, api, execute, active }) {
+export default function SubscriptionPlaza({
+  data,
+  api,
+  execute,
+  active,
+  onSubscribe,
+}) {
   const { modal } = App.useApp();
   const [packages, setPackages] = useState([]);
   const [custom, setCustom] = useState(null);
@@ -44,6 +52,7 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
       (sum, category) => sum + category.sources.length,
       0,
     );
+    let openSubscription = false;
     modal.confirm({
       title: `同步「${manifest.package.name}」到本地？`,
       content: (
@@ -53,8 +62,8 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
           </p>
           <p>
             将新增 {impact.categories_new} 个分类、{impact.tags_new} 个标签、
-            {impact.sources_new} 个来源；复用 {impact.sources_existing}{" "}
-            个已有来源。
+            {impact.sources_new} 个来源；更新 {impact.sources_updated}{" "}
+            个来源的归类， 已匹配 {impact.sources_existing} 个来源。
           </p>
           {impact.conflicts.length > 0 && (
             <Alert
@@ -62,7 +71,7 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
               message={`分类冲突：${impact.conflicts.join("、")}`}
             />
           )}
-          <p>导入后不会自动创建工作区订阅，也不会推送历史内容。</p>
+          <p>同步完成后可选择工作区和标签建立订阅；不会推送历史内容。</p>
         </div>
       ),
       okText: "同步到本地",
@@ -71,6 +80,9 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
         loading: !!active["package-import"],
       },
       cancelText: "取消",
+      afterClose: () => {
+        if (openSubscription) void onSubscribe(manifest);
+      },
       onOk: async () => {
         const result = await execute(
           () => api("packages/import", "POST", { manifest }),
@@ -80,6 +92,7 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
         if (result) {
           setCustom(null);
           await load();
+          openSubscription = true;
         }
       },
     });
@@ -126,67 +139,94 @@ export default function SubscriptionPlaza({ data, api, execute, active }) {
   const renderPack = (
     { manifest, preview, source_count },
     customPack = false,
-  ) => (
-    <article className="plaza-item" key={manifest.package.key}>
-      <div className="plaza-item-head">
-        <div>
-          <span className="eyebrow">
-            {customPack ? "本地 JSON" : "内置订阅包"}
-          </span>
-          <h2>{manifest.package.name}</h2>
-          <p>{manifest.package.description}</p>
-        </div>
-        <Button
-          type="primary"
-          icon={<ImportOutlined />}
-          disabled={preview.conflicts.length > 0}
-          onClick={() => importPack(manifest, preview)}
-        >
-          导入本地
-        </Button>
-      </div>
-      <div className="plaza-metrics">
-        {manifest.categories.map((category) => (
-          <div key={category.key}>
-            <strong>{category.name}</strong>
-            <span>
-              {category.sources.length} 个来源 · {category.tags.length} 个标签
+  ) => {
+    const count =
+      source_count ??
+      manifest.categories.reduce((n, c) => n + c.sources.length, 0);
+    const ready =
+      preview.categories_new === 0 &&
+      preview.tags_new === 0 &&
+      preview.sources_new === 0 &&
+      preview.sources_updated === 0 &&
+      preview.conflicts.length === 0;
+    return (
+      <article className="plaza-item" key={manifest.package.key}>
+        <div className="plaza-item-head">
+          <div>
+            <span className="eyebrow">
+              {customPack ? "本地 JSON" : "内置订阅包"}
             </span>
-            <div className="plaza-tags">
-              {category.tags.map((tag) => (
-                <Tag key={tag.key}>{tag.name}</Tag>
-              ))}
-            </div>
+            <h2>{manifest.package.name}</h2>
+            <p>{manifest.package.description}</p>
           </div>
-        ))}
-      </div>
-      <div className="plaza-source-list">
-        {manifest.categories.flatMap((category) =>
-          category.sources.map((source) => (
-            <div key={`${category.key}-${source.url}`}>
-              <span>{source.name}</span>
-              <Tag>{types[source.type]}</Tag>
+          <Button
+            type="primary"
+            aria-label={ready ? "创建订阅" : "导入本地"}
+            icon={ready ? <PlusOutlined /> : <ImportOutlined />}
+            disabled={preview.conflicts.length > 0}
+            loading={!!active["package-import"]}
+            onClick={() =>
+              ready ? onSubscribe(manifest) : importPack(manifest, preview)
+            }
+          >
+            {ready ? "创建订阅" : "导入本地"}
+          </Button>
+        </div>
+        <div className="plaza-metrics">
+          {manifest.categories.map((category) => (
+            <div key={category.key}>
+              {manifest.categories.length > 1 && (
+                <strong>{category.name}</strong>
+              )}
+              <span>
+                {category.sources.length} 个来源 · {category.tags.length} 个标签
+              </span>
+              <div className="plaza-tags">
+                {category.tags.map((tag) => (
+                  <Tag key={tag.key}>{tag.name}</Tag>
+                ))}
+              </div>
             </div>
-          )),
-        )}
-      </div>
-      <small>
-        共{" "}
-        {source_count ??
-          manifest.categories.reduce((n, c) => n + c.sources.length, 0)}{" "}
-        个来源， 新增 {preview.sources_new} · 复用 {preview.sources_existing}
-        {preview.conflicts.length > 0
-          ? ` · ${preview.conflicts.length} 个分类冲突`
-          : ""}
-      </small>
-    </article>
-  );
+          ))}
+        </div>
+        <div className="plaza-sync-state">
+          {ready
+            ? "分类、标签与来源已在本地"
+            : `待同步：${preview.categories_new} 个分类 · ${preview.tags_new} 个标签 · ${preview.sources_new} 个新来源 · ${preview.sources_updated} 个来源归类`}
+          {preview.conflicts.length > 0 &&
+            ` · ${preview.conflicts.length} 个分类冲突`}
+        </div>
+        <Collapse
+          ghost
+          size="small"
+          className="plaza-source-collapse"
+          items={[
+            {
+              key: "sources",
+              label: `来源明细（${count}）`,
+              children: (
+                <div className="plaza-source-list">
+                  {manifest.categories.flatMap((category) =>
+                    category.sources.map((source) => (
+                      <div key={`${category.key}-${source.url}`}>
+                        <span>{source.name}</span>
+                        <Tag>{types[source.type]}</Tag>
+                      </div>
+                    )),
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </article>
+    );
+  };
   return (
     <>
       <section className="panel plaza-toolbar">
         <div>
           <h2>订阅包</h2>
-          <p>先把公开来源同步到本地，再在“订阅”中选择工作区、分类与标签。</p>
         </div>
         <Space wrap>
           <input
