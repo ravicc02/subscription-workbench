@@ -314,11 +314,14 @@ try:
         expect(page.get_by_text("匹配 2 个来源，其中 2 个已启用")).to_be_visible()
         page.screenshot(path=str(out / "subscription-scope.png"), full_page=True)
         results["category_and_multi_tag_selection"] = True
-        expect(page.get_by_text("Agent 整理 · 调用模型", exact=True)).to_be_visible()
-        results["processing_modes_explained"] = True
+        expect(
+            page.get_by_role("dialog").get_by_text("Agent 整理 · 按工作区规则和模板", exact=True)
+        ).to_be_visible()
+        expect(page.get_by_label("模型（可选）", exact=True)).to_be_visible()
         select("处理方式", "直接转发 · 不调用模型")
-        expect(page.get_by_text("直接转发 · 无模型调用", exact=True)).to_be_visible()
+        expect(page.get_by_role("dialog").get_by_title("直接转发 · 不调用模型")).to_be_visible()
         expect(page.get_by_label("模型（可选）", exact=True)).to_have_count(0)
+        results["processing_mode_selection"] = True
         expect(page.get_by_label("订阅追加要求（可选）", exact=True)).to_have_count(0)
         page.get_by_role("button", name="保存", exact=True).click()
         expect(page.get_by_role("dialog")).to_have_count(0)
@@ -358,6 +361,14 @@ try:
         results["artifact_view"] = True
         page.screenshot(path=str(out / "artifact.png"), full_page=True)
         page.locator(".ant-drawer-open .ant-drawer-close").click()
+        nav("运行概览")
+        page.get_by_role("button", name="刷新", exact=True).click()
+        page.get_by_text("刷新工作台完成", exact=True).wait_for()
+        page.locator(".ant-notification-notice-close").evaluate_all(
+            "(buttons) => buttons.forEach((button) => button.click())"
+        )
+        page.screenshot(path=str(out / "showcase.png"), full_page=True)
+        nav("运行与回溯")
         database = instance / "state/workbench.sqlite3"
         with sqlite3.connect(database) as conn:
             job_id, old_state, old_retry, old_error = conn.execute(
@@ -387,7 +398,7 @@ try:
         nav("工作区")
         page.screenshot(path=str(out / "workspaces.png"), full_page=True)
         original_path = bots[0]["workspace_path"]
-        page.get_by_label("AI 关注范围", exact=True).fill("尚未保存的关注范围")
+        page.get_by_label("推送内容模板", exact=True).fill("尚未保存的模板")
         page.get_by_role("button", name="重命名工作区", exact=True).click()
         page.get_by_role("dialog").get_by_label("工作区名称", exact=True).fill("行情共享工作区")
         page.get_by_role("dialog").get_by_role("button", name="保存名称", exact=True).click()
@@ -408,12 +419,9 @@ try:
             for b in renamed["bots"]
             if b["name"] in ("UI Shared A", "UI Shared B")
         )
-        expect(page.get_by_label("AI 关注范围", exact=True)).to_have_value("尚未保存的关注范围")
+        expect(page.get_by_label("推送内容模板", exact=True)).to_have_value("尚未保存的模板")
         results["shared_workspace_quick_rename"] = True
-        page.get_by_label("AI 关注范围", exact=True).fill("关注软件版本发布和兼容性变化")
-        page.get_by_label("整理要求", exact=True).fill(
-            "只保留已经核实的变更，分事实和后续关注两部分。"
-        )
+        page.get_by_label("推送内容模板", exact=True).fill("标题：\n已核实的版本变化：")
         page.locator(".workspace-content").get_by_label("工作区名称", exact=True).fill(
             "版本发布工作区"
         )
@@ -423,17 +431,16 @@ try:
         ).first.wait_for()
         current = page.request.get("http://127.0.0.1:6191/api/overview").json()
         shared = next(w for w in current["workspaces"] if w["id"] == bots[0]["workspace_id"])
-        assert shared["ai_profile"]["focus_prompt"] == "关注软件版本发布和兼容性变化"
-        assert shared["ai_profile"]["processing_prompt"].startswith("只保留")
+        assert shared["ai_profile"] == {"output_template": "标题：\n已核实的版本变化："}
         results["workspace_ai_settings"] = True
         page.screenshot(path=str(out / "workspace-settings.png"), full_page=True)
         independent = next(w for w in current["workspaces"] if w["id"] == bots[2]["workspace_id"])
         page.locator(".workspace-option button").filter(has_text=independent["name"]).click()
-        page.get_by_label("AI 关注范围", exact=True).fill("仅关注能源政策与供需变化")
+        page.get_by_label("推送内容模板", exact=True).fill("标题：\n独立工作区内容：")
         page.get_by_role("button", name="保存工作区设置", exact=True).click()
         page.wait_for_timeout(300)
         current = page.request.get("http://127.0.0.1:6191/api/overview").json()
-        assert len({w["ai_profile"]["focus_prompt"] for w in current["workspaces"]}) == 2
+        assert len({w["ai_profile"]["output_template"] for w in current["workspaces"]}) == 2
         results["independent_workspace_profiles"] = True
         headers = {"X-Requested-With": "workbench"}
         dialog_model = page.request.post(
@@ -461,7 +468,6 @@ try:
         page.get_by_text("检索配置已保存", exact=True).wait_for()
         nav("工作区")
         page.locator(".workspace-option button").filter(has_text="版本发布工作区").click()
-        page.get_by_label("对话风格与边界", exact=True).fill("只解释当前目标的推送")
         page.get_by_label("允许实时检索", exact=True).check()
         page.get_by_role("button", name="保存工作区设置", exact=True).click()
         page.get_by_text(
@@ -470,10 +476,7 @@ try:
         configured = page.request.get("http://127.0.0.1:6191/api/overview").json()
         workspace = next(w for w in configured["workspaces"] if w["id"] == bots[0]["workspace_id"])
         assert configured["conversation_model_id"] == dialog_model["id"]
-        assert workspace["conversation_profile"] == {
-            "prompt": "只解释当前目标的推送",
-            "web_search_enabled": True,
-        }
+        assert workspace["conversation_profile"] == {"web_search_enabled": True}
         nav("对话")
         expect(page.get_by_text("入站与回复", exact=True)).to_be_visible()
         page.screenshot(path=str(out / "conversations.png"), full_page=True)
@@ -635,7 +638,7 @@ try:
         page.get_by_label("机器人名称", exact=True).fill("Telegram Network Check")
         select("机器人类型", "Telegram")
         page.get_by_role("button", name="下一步", exact=True).click()
-        page.get_by_text("Telegram 自动使用采集网络中保存的全局代理地址").wait_for()
+        expect(page.get_by_label("Bot Token", exact=True)).to_be_visible()
         assert page.get_by_label("机器人网络", exact=True).count() == 0
         page.get_by_role("dialog").locator(".ant-modal-close").click()
         expect(page.get_by_role("dialog")).to_have_count(0)

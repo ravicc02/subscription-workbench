@@ -184,6 +184,8 @@ def create_app(root=None, worker=True, network=None):
             return w.update_bot(key, data)
         if action == "test":
             bot = w.store.get("bot", key)
+            if not w.channels.info(bot["type"]).get("push_capable", True):
+                raise ValueError("QQ 官方接口不支持主动测试消息；请向机器人发送消息以验证被动回复")
             if not bot.get("enabled") or bot["status"] not in ("CONNECTED", "READY"):
                 raise ValueError("机器人尚未就绪或已暂停")
             config = w.store.open(bot["secret"])
@@ -202,6 +204,7 @@ def create_app(root=None, worker=True, network=None):
                         target,
                         text,
                         "test-" + secrets.token_hex(12),
+                        **({"bot_id": bot["id"]} if bot["type"] == "qq" else {}),
                     )
                 )
             w.store.audit("bot", key, "TEST_ACCEPTED", {"targets": len(receipts)})
@@ -503,6 +506,10 @@ def create_app(root=None, worker=True, network=None):
         if kind == "jobs":
             for r in rows:
                 r.pop("snapshot", None)
+        if kind == "inbound_messages":
+            for r in rows:
+                r.pop("attachments", None)
+                r["media_types"] = json.loads(r.get("media_types") or "[]")
         return {"rows": rows, "total": total}
 
     @app.get("/api/artifacts/{job_id}")

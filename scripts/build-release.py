@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE_ROOTS = ("backend/", "docs/", "packs/", "scripts/", "templates/", "web/")
+INCLUDE_ROOTS = ("assets/", "backend/", "docs/", "packs/", "scripts/", "templates/", "web/")
 INCLUDE_FILES = {"README.md", "CHANGELOG.md", "start.ps1", "requirements.txt", "pyproject.toml"}
 EXCLUDE_ROOTS = ("web/dist/", "web/node_modules/")
 

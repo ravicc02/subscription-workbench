@@ -1134,26 +1134,26 @@ def manage(c, kind, action, rows, mode="apply"):
     )
 
 
-def test_workspace_ai_settings_are_task_scoped_and_versioned(wb, server):
+def test_workspace_template_is_task_scoped_and_legacy_rules_are_ignored(wb, server):
     c, w = wb
     a = bot(c, server, "independent")
     b = bot(c, server, "independent")
     src = source(c)
-    for item, focus in ((a, "只关注能源政策"), (b, "只关注软件版本发布")):
+    for item, template in ((a, "标题：\\n能源要点：\\n来源："), (b, "标题：\\n版本要点：\\n来源：")):
         workspace = c.get("/api/workspaces/" + item["workspace_id"] + "/settings").json()
         profile = workspace["ai_profile"]
         profile.update(
-            focus_prompt=focus,
+            focus_prompt="这个旧字段不应生效",
             processing_prompt="保留证据，输出三条要点",
-            output_template="标题：\n要点：\n来源：",
+            output_template=template,
             excluded_topics="广告与未经证实的传闻",
         )
         result = post(
             c,
             "workspaces/" + workspace["id"] + "/settings",
-            {"revision": workspace["revision"], "name": focus, "ai_profile": profile},
+            {"revision": workspace["revision"], "name": item["name"], "ai_profile": profile},
         )
-        assert result["ai_profile"]["focus_prompt"] == focus
+        assert result["ai_profile"] == {"output_template": template}
         assert (
             c.post(
                 "/api/workspaces/" + workspace["id"] + "/settings",
@@ -1166,12 +1166,13 @@ def test_workspace_ai_settings_are_task_scoped_and_versioned(wb, server):
     jobs = w.store.db.execute("SELECT * FROM jobs ORDER BY created").fetchall()
     assert len(jobs) == 2
     snapshots = [json.loads(j["snapshot"]) for j in jobs]
-    assert "只关注能源政策" in snapshots[0]["rules"]["docs/rules.md"]
-    assert "只关注软件版本发布" in snapshots[1]["rules"]["docs/rules.md"]
+    assert snapshots[0]["rules"]["docs/rules.md"] == snapshots[1]["rules"]["docs/rules.md"]
+    assert "这个旧字段不应生效" not in snapshots[0]["rules"]["docs/rules.md"]
+    assert snapshots[0]["rules"]["docs/template.md"] != snapshots[1]["rules"]["docs/template.md"]
     assert snapshots[0]["workspace_profile"] != snapshots[1]["workspace_profile"]
     workspace = c.get("/api/workspaces/" + a["workspace_id"] + "/settings").json()
     profile = workspace["ai_profile"]
-    profile["focus_prompt"] = "后来修改的关注范围"
+    profile["focus_prompt"] = "后来修改的旧关注范围"
     post(
         c,
         "workspaces/" + workspace["id"] + "/settings",
@@ -1187,7 +1188,7 @@ def test_workspace_ai_settings_are_task_scoped_and_versioned(wb, server):
     )
 
 
-def test_legacy_rules_are_migrated_without_overwriting_files(wb, server):
+def test_legacy_rules_are_ignored_without_overwriting_files(wb, server):
     c, w = wb
     b = bot(c, server, "independent")
     path = Path(b["workspace_path"], "docs/rules.md")
@@ -1196,7 +1197,7 @@ def test_legacy_rules_are_migrated_without_overwriting_files(wb, server):
     legacy.pop("ai_profile", None)
     w.store.put("workspace", legacy)
     workspace = c.get("/api/workspaces/" + b["workspace_id"] + "/settings").json()
-    assert workspace["ai_profile"]["processing_prompt"] == "原来的专属整理要求"
+    assert list(workspace["ai_profile"]) == ["output_template"]
     profile = workspace["ai_profile"]
     profile["processing_prompt"] = "页面配置的新整理要求"
     post(
@@ -1205,12 +1206,9 @@ def test_legacy_rules_are_migrated_without_overwriting_files(wb, server):
         {"revision": workspace["revision"], "ai_profile": profile},
     )
     assert path.read_text(encoding="utf-8") == "原来的专属整理要求"
-    assert (
-        c.get("/api/workspaces/" + workspace["id"] + "/settings").json()["ai_profile"][
-            "processing_prompt"
-        ]
-        == "页面配置的新整理要求"
-    )
+    assert c.get("/api/workspaces/" + workspace["id"] + "/settings").json()["ai_profile"] == {
+        "output_template": profile["output_template"]
+    }
     assert (
         c.post(
             "/api/workspaces/" + workspace["id"] + "/files",
@@ -1430,7 +1428,7 @@ def test_removed_source_inflight_check_cannot_ingest_old_results(wb, server):
     assert w.store.db.execute("SELECT COUNT(*) FROM inputs").fetchone()[0] == 0
 
 
-def test_legacy_appended_agent_rules_and_custom_templates_are_not_discarded(wb, server):
+def test_legacy_agent_rules_are_ignored_but_custom_template_is_kept(wb, server):
     c, w = wb
     b = bot(c, server, "independent")
     workspace = w.store.get("workspace", b["workspace_id"])
@@ -1445,7 +1443,7 @@ def test_legacy_appended_agent_rules_and_custom_templates_are_not_discarded(wb, 
     ) + "\n客户自定义的栏目不能丢失"
     (root / "docs/template.md").write_text(template, encoding="utf-8")
     migrated = c.get("/api/workspaces/" + workspace["id"] + "/settings").json()["ai_profile"]
-    assert custom in migrated["additional_instructions"]
+    assert "additional_instructions" not in migrated
     assert migrated["output_template"] == template
     assert (
         c.post(
@@ -1454,6 +1452,28 @@ def test_legacy_appended_agent_rules_and_custom_templates_are_not_discarded(wb, 
         ).status_code
         == 200
     )
+
+
+def test_legacy_subscription_filters_are_ignored(wb, server):
+    c, w = wb
+    b = bot(c, server)
+    s = source(c)
+    saved = post(
+        c,
+        "subscriptions",
+        {
+            "name": "Legacy fields",
+            "workspace_id": b["workspace_id"],
+            "source_id": s["id"],
+            "mode": "forward",
+            "keywords": ["this text must not be required"],
+            "instructions": "this old instruction must not reach the Agent",
+        },
+    )
+    assert "keywords" not in saved and "instructions" not in saved
+    assert hook(c, s)["new_events"] == 1
+    snapshot = json.loads(w.store.db.execute("SELECT snapshot FROM jobs").fetchone()[0])
+    assert "instructions" not in snapshot
 
 
 def test_shared_workspace_can_be_named_and_reused_without_implicit_rename(wb, server):

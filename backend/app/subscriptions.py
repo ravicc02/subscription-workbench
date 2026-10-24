@@ -23,8 +23,13 @@ def resolved_source_ids(subscription, sources):
 
 def public_subscription(subscription, sources=None):
     ids = source_ids(subscription)
+    visible = {
+        key: value
+        for key, value in subscription.items()
+        if key not in ("keywords", "instructions")
+    }
     return {
-        **subscription,
+        **visible,
         "source_ids": ids,
         "source_id": ids[0] if ids else None,
         "category_id": subscription.get("category_id"),

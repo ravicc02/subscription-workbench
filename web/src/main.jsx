@@ -110,14 +110,6 @@ const SOURCE_CHECK_RESULTS = {
 const badge = (s) => <Tag color={STATES[s]?.[1]}>{STATES[s]?.[0] || s}</Tag>;
 const subscriptionSourceIds = (row) =>
   row.source_ids || (row.source_id ? [row.source_id] : []);
-const MODE_HELP = {
-  agent:
-    "调用模型阅读原文，按工作区的关注范围、整理要求和模板生成推送。适合需要归纳、筛选和分析的内容，会产生模型用量。",
-  forward:
-    "不调用模型。转发提取到的内容并附来源，最多保留 5000 字符；不做 AI 总结，也不应用工作区 AI 规则。",
-  rules:
-    "不调用模型。先按程序关键词筛选，再按固定格式截取最多 1200 字符；是程序截取，不是 AI 语义摘要。",
-};
 const when = (v) =>
   v ? new Date(v * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
 const NAV = [
@@ -314,7 +306,8 @@ function Workbench() {
       message.warning("登录已失效，请重新登录");
     };
     window.addEventListener("workbench:session-expired", onExpired);
-    return () => window.removeEventListener("workbench:session-expired", onExpired);
+    return () =>
+      window.removeEventListener("workbench:session-expired", onExpired);
   }, [message]);
   useEffect(() => {
     if (!auth?.authenticated) return;
@@ -425,7 +418,6 @@ function Workbench() {
         ? {
             ...row,
             domains_text: (row.domains || []).join(", "),
-            keywords_text: (row.keywords || []).join(", "),
           }
         : {
             type: kind === "bot" ? "weixin" : "rss",
@@ -447,11 +439,14 @@ function Workbench() {
     if (!current) return;
     const category =
       manifest.categories.length === 1
-        ? current.categories.find((item) => item.key === manifest.categories[0].key)
+        ? current.categories.find(
+            (item) => item.key === manifest.categories[0].key,
+          )
         : null;
     setTab("subscriptions");
     open("subscription");
-    if (category) form.setFieldsValue({ category_id: category.id, tag_ids: [] });
+    if (category)
+      form.setFieldsValue({ category_id: category.id, tag_ids: [] });
   };
   const artifactOpen = async (job, kind = "report") => {
     const v = await execute(() => api(`artifacts/${job}?kind=${kind}`));
@@ -517,7 +512,11 @@ function Workbench() {
       s.category_id === formCategory &&
       (formTagIds || []).some((id) => (s.tag_ids || []).includes(id)),
   );
-  const receivingBots = bots.filter((b) => b.workspace_id === formWorkspaceId);
+  const receivingBots = bots.filter(
+    (b) =>
+      b.workspace_id === formWorkspaceId &&
+      platforms.find((p) => p.id === b.type)?.push_capable !== false,
+  );
   const workspaceName = (id) =>
       workspaces.find((w) => w.id === id)?.name || "待绑定",
     modelName = (id) => models.find((m) => m.id === id)?.name || "默认模型",
@@ -709,16 +708,23 @@ function Workbench() {
           )}
           {kind === "source" && (
             <Button
-              disabled={sourceCheckBusy || chosen(kind).every(
-                (source) => source.type === "webhook" || !source.enabled,
-              )}
+              disabled={
+                sourceCheckBusy ||
+                chosen(kind).every(
+                  (source) => source.type === "webhook" || !source.enabled,
+                )
+              }
               title={
-                chosen(kind).every((source) => source.type === "webhook" || !source.enabled)
+                chosen(kind).every(
+                  (source) => source.type === "webhook" || !source.enabled,
+                )
                   ? "暂停的来源和 Webhook 不参与轮询检查"
                   : undefined
               }
               loading={!!operations.active["batch-check-sources"]}
-              onClick={() => confirmSourceCheck(chosen(kind), "检查所选订阅源", "selected")}
+              onClick={() =>
+                confirmSourceCheck(chosen(kind), "检查所选订阅源", "selected")
+              }
             >
               检查所选
             </Button>
@@ -829,13 +835,6 @@ function Workbench() {
             tag_ids: v.tag_ids,
             source_ids: [],
             model_id: v.mode === "agent" ? v.model_id || null : null,
-            instructions: v.mode === "agent" ? v.instructions || "" : "",
-            keywords: v.keywords_text
-              ? v.keywords_text
-                  .split(",")
-                  .map((x) => x.trim())
-                  .filter(Boolean)
-              : [],
           }),
         "订阅已保存",
       );
@@ -851,18 +850,6 @@ function Workbench() {
     sources: ["source", "新增订阅源"],
     subscriptions: ["subscription", "新增订阅"],
     models: ["model", "添加模型"],
-  };
-  const subtitles = {
-    overview: "来源、处理与投递，集中查看。",
-    bots: "连接真实平台，自动绑定本地工作区。",
-    workspaces: "实际本地目录，可以共用，也可以独立使用。",
-    sources: "管理持续关注的内容与事件入口。",
-    plaza: "同步公开来源包，再按分类与标签分配给工作区。",
-    network: "配置订阅采集代理，检查列表与正文访问方式。",
-    subscriptions: "选择关注范围，以及每次更新的处理方式。",
-    models: "配置模型服务，验证工具调用能力。",
-    history: "从原始输入到实际投递，逐步回溯。",
-    platforms: "已实现的接入方式与后续兼容范围。",
   };
   return (
     <div className="shell">
@@ -893,7 +880,6 @@ function Workbench() {
           <div>
             <i /> 独立服务运行中
           </div>
-          <small>本地目录 · 多平台推送</small>
           <Button
             type="text"
             icon={<LogoutOutlined />}
@@ -912,7 +898,6 @@ function Workbench() {
           <div>
             <span className="eyebrow">SUBSCRIPTION WORKBENCH</span>
             <h1>{NAV.find((n) => n[0] === tab)?.[2]}</h1>
-            <p>{subtitles[tab]}</p>
           </div>
           <Space wrap>
             <Popover
@@ -990,13 +975,17 @@ function Workbench() {
               刷新
             </Button>
             {tab === "sources" && (
-              <Tooltip title={`已启用且可轮询的来源 ${checkableSources.length} 个；暂停及 Webhook 不参与`}>
+              <Tooltip
+                title={`已启用且可轮询的来源 ${checkableSources.length} 个；暂停及 Webhook 不参与`}
+              >
                 <Button
                   aria-label="检查全部"
                   icon={<CheckCircleOutlined />}
                   disabled={!checkableSources.length || sourceCheckBusy}
                   loading={!!operations.active["batch-check-sources"]}
-                  onClick={() => confirmSourceCheck(sources, "检查全部订阅源", "all")}
+                  onClick={() =>
+                    confirmSourceCheck(sources, "检查全部订阅源", "all")
+                  }
                 >
                   检查全部
                 </Button>
@@ -1248,7 +1237,10 @@ function Workbench() {
           <section className="panel">
             {batchBar("source")}
             <div className="table-tools source-tools">
-              <span>显示 {visibleSources.length} / {sources.length} 个来源 · 按订阅启用采集</span>
+              <span>
+                显示 {visibleSources.length} / {sources.length} 个来源 ·
+                按订阅启用采集
+              </span>
               <Select
                 allowClear
                 placeholder="全部分类"
@@ -1465,10 +1457,7 @@ function Workbench() {
                           <Button
                             type="text"
                             aria-label={`检查订阅源 ${s.name}`}
-                            disabled={
-                              !s.enabled ||
-                              sourceCheckBusy
-                            }
+                            disabled={!s.enabled || sourceCheckBusy}
                             loading={!!operations.active[`check-${s.id}`]}
                             onClick={() =>
                               execute(
@@ -1508,22 +1497,28 @@ function Workbench() {
                   }))}
                   onChange={(key) => setSourceCheckId(key)}
                 />
-                {["QUEUED", "RUNNING"].includes(sourceCheck?.state) && !sourceCheck?.stop_requested && (
-                  <Button
-                    danger
-                    loading={!!operations.active["stop-source-check"]}
-                    onClick={async () => {
-                      const result = await execute(
-                        () => api(`source-checks/${sourceCheck.id}/stop`, "POST", {}),
-                        "已停止未开始的检查；已开始的检查会结束并记录结果",
-                        { key: "stop-source-check", label: "停止后续检查" },
-                      );
-                      if (result) setSourceCheck(result);
-                    }}
-                  >
-                    停止后续检查
-                  </Button>
-                )}
+                {["QUEUED", "RUNNING"].includes(sourceCheck?.state) &&
+                  !sourceCheck?.stop_requested && (
+                    <Button
+                      danger
+                      loading={!!operations.active["stop-source-check"]}
+                      onClick={async () => {
+                        const result = await execute(
+                          () =>
+                            api(
+                              `source-checks/${sourceCheck.id}/stop`,
+                              "POST",
+                              {},
+                            ),
+                          "已停止未开始的检查；已开始的检查会结束并记录结果",
+                          { key: "stop-source-check", label: "停止后续检查" },
+                        );
+                        if (result) setSourceCheck(result);
+                      }}
+                    >
+                      停止后续检查
+                    </Button>
+                  )}
               </Space>
               <p>
                 {sourceCheck?.summary ||
@@ -1742,7 +1737,12 @@ function Workbench() {
           </section>
         )}
         {tab === "conversations" && (
-          <ConversationPanel data={data} api={api} execute={execute} active={operations.active} />
+          <ConversationPanel
+            data={data}
+            api={api}
+            execute={execute}
+            active={operations.active}
+          />
         )}
         {tab === "history" && (
           <section className="panel">
@@ -1846,8 +1846,20 @@ function Workbench() {
               <section className="panel platform-card" key={p.id}>
                 <div className="panel-title">
                   <h2>{p.name}</h2>
-                  <Tag color={p.implemented ? "green" : "default"}>
-                    {p.implemented ? "已实现接入" : "规划中"}
+                  <Tag
+                    color={
+                      p.implemented
+                        ? p.push_capable === false
+                          ? "gold"
+                          : "green"
+                        : "default"
+                    }
+                  >
+                    {p.implemented
+                      ? p.push_capable === false
+                        ? "仅被动回复"
+                        : "已实现接入"
+                      : "规划中"}
                   </Tag>
                 </div>
                 <p>
@@ -1859,12 +1871,22 @@ function Workbench() {
                         discord: "Bot Token · 指定频道发送",
                         slack: "Bot Token · 指定频道或会话发送",
                         onebot: "HTTP API · 群聊或私聊文本发送",
+                        qq: "AppID / AppSecret · 官方 WebSocket · 不支持主动订阅推送",
+                        feishu: "企业自建应用 · 长连接 · 双向消息",
                         feishu_group: "群 Webhook · 文本推送",
                         wecom_group: "群 Webhook · 文本推送",
                         dingtalk_group: "群 Webhook · 加签及安全关键词",
                       }[p.id]
                     : "适配完成并验证后开放创建。"}
                 </p>
+                {!!p.inbound_formats?.length && (
+                  <div className="platform-formats">
+                    {p.inbound_formats.map((format) => (
+                      <Tag key={format}>接收{({ text: "文字", image: "图片", voice: "语音", video: "视频" })[format] || format}</Tag>
+                    ))}
+                    <Tag>回复文字</Tag>
+                  </div>
+                )}
                 {p.implemented && (
                   <Button
                     onClick={() => {
@@ -1984,23 +2006,14 @@ function Workbench() {
                     <RobotOutlined />
                     <div>
                       <b>{platformName(selectedType)}</b>
-                      <small>
-                        {selectedType === "weixin"
-                          ? "接入后展示二维码，使用微信扫码完成登录。"
-                          : "填写该平台所需配置，保存后验证接入。"}
-                      </small>
                     </div>
                   </div>
-                  {selectedType === "telegram" && (
+                  {selectedType === "qq" && (
                     <Alert
-                      type="info"
+                      type="warning"
                       showIcon
                       style={{ marginBottom: 16 }}
-                      message={
-                        data.network?.configured
-                          ? "Telegram 自动使用采集网络中保存的全局代理地址"
-                          : "尚未配置全局代理，Telegram 将尝试直连"
-                      }
+                      message="QQ 官方接口仅用于接收消息与被动回复，不能主动发送订阅快讯。"
                     />
                   )}
                   {selectedPlatform?.fields?.map((f) => (
@@ -2060,7 +2073,6 @@ function Workbench() {
                                   type="info"
                                   showIcon
                                   message={`将加入共享工作区「${joiningShared.name}」`}
-                                  description="如需更改名称，可在工作区页面点击重命名；不会创建重复目录。"
                                   style={{ marginBottom: 18 }}
                                 />
                               ) : (
@@ -2075,7 +2087,6 @@ function Workbench() {
                                     },
                                     { max: 100 },
                                   ]}
-                                  extra="名称用于识别工作区，中文和英文均可；本地目录单独保存。"
                                 >
                                   <Input
                                     placeholder="例如：市场资讯、研发更新"
@@ -2095,7 +2106,6 @@ function Workbench() {
                               <Form.Item
                                 name="workspace_path"
                                 label="本地目录（可选）"
-                                extra="留空将自动创建。目录位于服务所在的电脑上。"
                               >
                                 <Input
                                   placeholder={
@@ -2123,7 +2133,6 @@ function Workbench() {
                         src={newBot.qr_image}
                         alt="微信登录二维码"
                       />
-                      <p>登录完成后，系统自动创建并绑定本地工作区。</p>
                       <Spin size="small" /> 等待扫码确认
                     </>
                   ) : newBot.status === "QR_EXPIRED" ? (
@@ -2153,10 +2162,6 @@ function Workbench() {
                       {badge(newBot.status)}
                       <h3>{newBot.workspace_name}</h3>
                       <p className="path">{newBot.workspace_path}</p>
-                      {newBot.status === "WAITING_TARGET" && (
-                        <p>请向机器人发送一条消息，建立接收会话后即可推送。</p>
-                      )}
-                      <p>在“订阅”中选择需要关注的来源。</p>
                     </>
                   )}
                 </div>
@@ -2198,7 +2203,6 @@ function Workbench() {
               <Form.Item
                 name="tag_ids"
                 label="标签"
-                extra="可多选，需先选分类。"
               >
                 <Select
                   mode="multiple"
@@ -2330,7 +2334,7 @@ function Workbench() {
                   formWorkspaceId
                     ? receivingBots.length
                       ? `接收机器人：${receivingBots.map((b) => b.name).join("、")}`
-                      : "未绑定机器人，当前不会投递"
+                      : "未绑定可主动推送的机器人，当前不会投递"
                     : undefined
                 }
               >
@@ -2370,7 +2374,12 @@ function Workbench() {
                 name="tag_ids"
                 label="标签（多选）"
                 rules={[
-                  { required: true, type: "array", min: 1, message: "请至少选择一个标签" },
+                  {
+                    required: true,
+                    type: "array",
+                    min: 1,
+                    message: "请至少选择一个标签",
+                  },
                 ]}
               >
                 <Select
@@ -2384,10 +2393,15 @@ function Workbench() {
               </Form.Item>
               {!!formTagIds?.length && (
                 <Alert
-                  type={matchingSources.some((s) => s.enabled) ? "info" : "warning"}
+                  type={
+                    matchingSources.some((s) => s.enabled) ? "info" : "warning"
+                  }
                   showIcon
                   message={`匹配 ${matchingSources.length} 个来源，其中 ${matchingSources.filter((s) => s.enabled).length} 个已启用`}
-                  description={matchingSources.slice(0, 5).map((s) => s.name).join("、")}
+                  description={matchingSources
+                    .slice(0, 5)
+                    .map((s) => s.name)
+                    .join("、")}
                   style={{ marginBottom: 18 }}
                 />
               )}
@@ -2401,57 +2415,17 @@ function Workbench() {
                     { value: "forward", label: "直接转发 · 不调用模型" },
                     {
                       value: "rules",
-                      label: "规则处理 · 关键词筛选与长度限制",
+                      label: "规则处理 · 固定格式与长度限制",
                     },
                   ]}
                 />
               </Form.Item>
-              <Alert
-                showIcon
-                type={processingMode === "agent" ? "info" : "warning"}
-                message={
-                  {
-                    agent: "Agent 整理 · 调用模型",
-                    forward: "直接转发 · 无模型调用",
-                    rules: "规则处理 · 无模型调用",
-                  }[processingMode || "agent"]
-                }
-                description={MODE_HELP[processingMode || "agent"]}
-                style={{ marginBottom: 20 }}
-              />
               {processingMode === "agent" && (
                 <Form.Item name="model_id" label="模型（可选）">
                   <Select
                     allowClear
                     placeholder="沿用工作区或全局默认"
                     options={modelOptions}
-                  />
-                </Form.Item>
-              )}
-              {processingMode === "agent" && (
-                <Alert
-                  type="info"
-                  showIcon
-                  message="AI 的关注范围、整理要求和输出模板在工作区中统一配置；订阅按所选分类与标签匹配来源。"
-                  style={{ marginBottom: 18 }}
-                />
-              )}
-              <Form.Item
-                name="keywords_text"
-                label="程序关键词筛选（可选）"
-                extra="先匹配标题、订阅摘要或事件文本，英文逗号分隔；留空不过滤。跨语言的主题判断请使用工作区的 AI 关注范围。"
-              >
-                <Input />
-              </Form.Item>
-              {processingMode === "agent" && (
-                <Form.Item
-                  name="instructions"
-                  label="订阅追加要求（可选）"
-                  extra="留空沿用工作区整理规则。追加要求适用于选中的全部订阅源，不覆盖工作区关注范围与排除条件。"
-                >
-                  <Input.TextArea
-                    rows={3}
-                    placeholder="例如：这些来源重点保留版本号、发布日期和兼容性变化。"
                   />
                 </Form.Item>
               )}
@@ -2591,7 +2565,7 @@ function Workbench() {
                   <p>向机器人发送一条消息，等待接收会话出现。</p>
                 )}
               </div>
-              {(b.type === "weixin" || b.type === "telegram") && (
+              {["weixin", "telegram", "qq", "feishu"].includes(b.type) && (
                 <div className="detail-block">
                   <span>对话模型</span>
                   <Select
@@ -2599,16 +2573,24 @@ function Workbench() {
                     allowClear
                     placeholder="沿用工作区或默认对话模型"
                     value={b.conversation_model_id || undefined}
-                    options={models.map((m) => ({ value: m.id, label: m.name }))}
+                    options={models.map((m) => ({
+                      value: m.id,
+                      label: m.name,
+                    }))}
                     style={{ width: "100%" }}
                     onChange={(conversation_model_id) =>
                       execute(
-                        () => api(`bots/${b.id}/update`, "POST", {
-                          revision: b.revision,
-                          conversation_model_id: conversation_model_id || null,
-                        }),
+                        () =>
+                          api(`bots/${b.id}/update`, "POST", {
+                            revision: b.revision,
+                            conversation_model_id:
+                              conversation_model_id || null,
+                          }),
                         "机器人对话模型已更新",
-                        { key: `bot-chat-model-${b.id}`, label: "保存机器人对话模型" },
+                        {
+                          key: `bot-chat-model-${b.id}`,
+                          label: "保存机器人对话模型",
+                        },
                       )
                     }
                   />
@@ -2638,18 +2620,6 @@ function Workbench() {
                             )
                           }
                         >
-                          {b.type === "telegram" && (
-                            <Alert
-                              type="info"
-                              showIcon
-                              style={{ marginBottom: 16 }}
-                              message={
-                                data.network?.configured
-                                  ? "Telegram 自动使用采集网络中保存的全局代理地址"
-                                  : "尚未配置全局代理，Telegram 将尝试直连"
-                              }
-                            />
-                          )}
                           {platforms
                             .find((p) => p.id === b.type)
                             ?.fields?.map((f) => (
@@ -2685,9 +2655,18 @@ function Workbench() {
                   style={{ marginBottom: 20 }}
                 />
               )}
+              {b.type === "qq" && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="QQ 官方机器人仅能接收消息并被动回复，不会发送订阅快讯或主动测试消息。"
+                />
+              )}
               <Space wrap>
                 <Button
                   icon={<SendOutlined />}
+                  disabled={b.type === "qq"}
                   loading={!!operations.active[`bot-test-${b.id}`]}
                   onClick={() =>
                     execute(

@@ -18,7 +18,9 @@ from .conversation import Conversation
 from .core import Conflict, Store, Workspaces, digest, dumps, uid
 from .default_taxonomy import apply_default_taxonomy
 from .management import Management
+from .media import MediaProcessor
 from .network import Network, RemoteError
+from .platform_sockets import PlatformSockets
 from .polling import DeferredRequest, RequestPolicy, retry_after
 from .profiles import conversation_profile_for, profile_for, rules_for
 from .proxy import ProxyError
@@ -39,6 +41,9 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
         self.workspaces = Workspaces(self.store)
         self.net = network or Network()
         self.channels = Channels(self.net, self.bot_proxy)
+        self.media = MediaProcessor(self.net, self.channels, root)
+        self.sockets = PlatformSockets()
+        self.channels.sockets = self.sockets
         self.policy = RequestPolicy(
             self.root / "state/http-state.json",
             {"minimum_request_gap_seconds": 10, "jitter_seconds": 15},
@@ -99,7 +104,7 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
             fields["network_mode"] = "proxy" if self.store.setting("collection_proxy") else "direct"
             if b.get("status") == "CONNECTION_FAILED" and not c.get("token"):
                 fields["error"] = "此前接入失败时未保存 Bot Token，请在修改接入配置中重新填写后重试"
-        fields["has_credentials"] = bool(c.get("token") or c.get("url"))
+        fields["has_credentials"] = bool(c.get("token") or c.get("url") or c.get("app_secret"))
         return fields
 
     def public_model(self, m):
@@ -217,6 +222,7 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
         receiver = self.receivers.pop(key, None)
         if receiver:
             receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
         b.update(draft_secret=self.store.seal(draft), status="CONNECTING", error=None)
         b = self.store.put("bot", b)
         try:
@@ -229,11 +235,17 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
             b["type"] == "telegram"
             and merged.get("token") == old.get("token")
             and not merged.get("chat_id")
+        ) or (
+            b["type"] in ("qq", "feishu")
+            and merged.get("app_id") == old.get("app_id")
+            and merged.get("app_secret") == old.get("app_secret")
         ):
             c["targets"] = old.get("targets", [])
             c["offset"] = old.get("offset", 0)
             if any(t.get("selected") for t in c["targets"]):
                 status = "CONNECTED"
+        if b["type"] in ("qq", "feishu") and status == "CONNECTED":
+            status = "CONNECTING"
         changed = (
             b["type"] == "weixin"
             or any(
@@ -248,6 +260,8 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                     "target_id",
                     "sign_secret",
                     "keyword",
+                    "app_id",
+                    "app_secret",
                 )
             )
             or c.get("targets") != old.get("targets")
@@ -512,25 +526,10 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                 "tag_ids",
                 "mode",
                 "model_id",
-                "instructions",
-                "keywords",
                 "enabled",
             )
             if k in body
         }
-        if (
-            not isinstance(data.get("keywords", []), list)
-            or len(data.get("keywords", [])) > 100
-            or any(
-                not isinstance(k, str) or not 1 <= len(k) <= 100 for k in data.get("keywords", [])
-            )
-        ):
-            raise ValueError("Keywords must be a bounded list of strings")
-        if (
-            not isinstance(data.get("instructions", ""), str)
-            or len(data.get("instructions", "")) > 10000
-        ):
-            raise ValueError("Instructions exceed size limit")
         if "enabled" in data and type(data["enabled"]) is not bool:
             raise ValueError("Enabled must be a boolean")
         data.setdefault("enabled", True)
@@ -642,16 +641,11 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                         sub, [source]
                     ):
                         continue
-                    text = " ".join(
-                        str(row.get(k, "")) for k in ("title", "summary", "text")
-                    ).lower()
-                    if sub.get("keywords") and not any(
-                        str(k).lower() in text for k in sub["keywords"]
-                    ):
-                        continue
                     w = self.store.get("workspace", sub["workspace_id"])
                     for bot in self.store.all("bot"):
                         if not bot.get("enabled") or bot.get("workspace_id") != w["id"]:
+                            continue
+                        if not self.channels.info(bot["type"]).get("push_capable", True):
                             continue
                         config = self.store.open(bot.get("secret"))
                         targets = [t["id"] for t in config.get("targets", []) if t.get("selected")]
@@ -660,7 +654,6 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                         rules = rules_for(w, self.workspaces)
                         snapshot = {
                             "mode": sub["mode"],
-                            "instructions": sub.get("instructions", ""),
                             "model": self.effective_model(sub, bot, w),
                             "rules": rules,
                             "workspace_profile": profile_for(w, self.workspaces),
@@ -876,7 +869,6 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                             "model": None,
                             "tools": [],
                             "rules": snapshot.get("rules", {}),
-                            "instructions": snapshot.get("instructions", ""),
                             "input_sha256": event["input_sha256"],
                         }
                     ),
@@ -995,6 +987,9 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
         if b["binding_revision"] != d["binding_revision"]:
             state("CANCELLED", "Target or workspace binding changed")
             return True
+        if not self.channels.info(b["type"]).get("push_capable", True):
+            state("CANCELLED", "Platform does not support proactive subscription delivery")
+            return True
         if not b["enabled"]:
             state("PAUSED", None, time.time() + 15)
             return True
@@ -1031,7 +1026,12 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
                     else f"[{d['job_id'][-6:]} {index + 1}/{len(parts)}]\n" + parts[index]
                 )
                 receipt = await self.channels.send(
-                    b["type"], c, d["target"], body, d["id"] + "-" + str(index)
+                    b["type"],
+                    c,
+                    d["target"],
+                    body,
+                    d["id"] + "-" + str(index),
+                    **({"bot_id": b["id"]} if b["type"] == "qq" else {}),
                 )
                 receipts.append({"part": index, **receipt, "at": time.time()})
                 self.store.db.execute(
@@ -1108,6 +1108,97 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
         except asyncio.CancelledError:
             pass
 
+    def socket_state(self, key, binding_revision):
+        try:
+            bot = self.store.get("bot", key)
+        except ValueError:
+            return
+        if not bot.get("enabled") or bot["binding_revision"] != binding_revision:
+            return
+        config = self.store.open(bot["secret"])
+        bot.update(
+            status="CONNECTED"
+            if any(t.get("selected") for t in config["targets"])
+            else "WAITING_TARGET",
+            error=None,
+            last_connected=time.time(),
+        )
+        self.store.put("bot", bot)
+
+    def socket_message(self, key, binding_revision, message):
+        if not isinstance(message, dict) or not message:
+            return
+        try:
+            bot = self.store.get("bot", key)
+        except ValueError:
+            return
+        if not bot.get("enabled") or bot["binding_revision"] != binding_revision:
+            return
+        target = message.get("target")
+        if not isinstance(target, str) or not 1 <= len(target) <= 160:
+            return
+        config = self.store.open(bot["secret"])
+        targets = config.setdefault("targets", [])
+        if not any(t["id"] == target for t in targets):
+            if len(targets) >= 500:
+                return
+            targets.append(
+                {
+                    "id": target,
+                    "name": str(message.get("name") or target)[:120],
+                    "selected": not targets,
+                }
+            )
+        selected = any(t.get("selected") for t in targets)
+        bot.update(
+            secret=self.store.seal(config),
+            status="CONNECTED" if selected else "WAITING_TARGET",
+            error=None,
+            last_connected=time.time(),
+        )
+        self.store.db.execute("BEGIN IMMEDIATE")
+        try:
+            if (
+                isinstance(message.get("id"), str)
+                and 1 <= len(message["id"]) <= 200
+                and isinstance(message.get("sender"), str)
+                and isinstance(message.get("text"), str)
+                and (message["text"].strip() or message.get("attachments"))
+                and len(message["text"]) <= 4000
+            ):
+                self.accept_inbound(bot, config, message)
+            self.store.put("bot", bot)
+            self.store.db.commit()
+        except BaseException:
+            self.store.db.rollback()
+            raise
+
+    async def socket_receiver(self, key):
+        revision = None
+        try:
+            bot = self.store.get("bot", key)
+            config = self.store.open(bot["secret"])
+            revision = bot["binding_revision"]
+            await self.sockets.run(
+                key,
+                bot["type"],
+                config,
+                lambda message: self.socket_message(key, revision, message),
+                lambda: self.socket_state(key, revision),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            try:
+                latest = self.store.get("bot", key)
+                if latest.get("enabled") and latest["binding_revision"] == revision:
+                    latest.update(status="RECONNECTING", error=self.safe_error(exc))
+                    self.store.put("bot", latest)
+                    self.store.audit("bot", key, "RECONNECTING", {"type": type(exc).__name__})
+            except ValueError:
+                pass
+            await asyncio.sleep(10)
+
     async def loop(self, operation, delay):
         while self.running:
             try:
@@ -1120,17 +1211,27 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
 
     async def tick(self):
         for b in self.store.all("bot"):
-            if b.get("workspace_id") and b.get("enabled") and b["type"] in ("weixin", "telegram"):
+            if (
+                b.get("workspace_id")
+                and b.get("enabled")
+                and b["status"] != "CONNECTION_FAILED"
+                and b["type"] in ("weixin", "telegram", "qq", "feishu")
+            ):
                 task = self.receivers.get(b["id"])
                 if task is None or task.done():
-                    self.receivers[b["id"]] = asyncio.create_task(self.receiver(b["id"]))
+                    worker = (
+                        self.socket_receiver if b["type"] in ("qq", "feishu") else self.receiver
+                    )
+                    self.receivers[b["id"]] = asyncio.create_task(worker(b["id"]))
         sources = self.store.all("source")
         active = {
             source_id
             for s in self.store.all("subscription")
             if s.get("enabled")
             and any(
-                b.get("enabled") and b.get("workspace_id") == s["workspace_id"]
+                b.get("enabled")
+                and b.get("workspace_id") == s["workspace_id"]
+                and self.channels.info(b["type"]).get("push_capable", True)
                 for b in self.store.all("bot")
             )
             for source_id in resolved_source_ids(s, sources)
@@ -1182,10 +1283,22 @@ class Workbench(Catalog, Management, CollectionSettings, Conversation, SearchToo
             raise RuntimeError("Another worker owns this state directory")
         self.store.recover()
         for workspace in self.store.all("workspace"):
-            if "ai_profile" not in workspace:
-                workspace["ai_profile"] = profile_for(workspace, self.workspaces)
+            normalized_profile = profile_for(workspace, self.workspaces)
+            normalized_conversation = conversation_profile_for(workspace)
+            if (
+                workspace.get("ai_profile") != normalized_profile
+                or workspace.get("conversation_profile") != normalized_conversation
+            ):
+                workspace["ai_profile"] = normalized_profile
+                workspace["conversation_profile"] = normalized_conversation
                 self.store.put("workspace", workspace, workspace["revision"])
                 self.store.audit("workspace", workspace["id"], "PROFILE_MIGRATED")
+        for subscription in self.store.all("subscription"):
+            if "keywords" in subscription or "instructions" in subscription:
+                subscription.pop("keywords", None)
+                subscription.pop("instructions", None)
+                self.store.put("subscription", subscription, subscription["revision"])
+                self.store.audit("subscription", subscription["id"], "CONFIG_MIGRATED")
         self.tasks = [
             asyncio.create_task(self.loop(self.tick, 3)),
             asyncio.create_task(self.loop(self.source_check_one, 0.5)),

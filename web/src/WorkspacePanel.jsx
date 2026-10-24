@@ -20,6 +20,8 @@ import {
   EditOutlined,
 } from "@ant-design/icons";
 
+const DEFAULT_TEMPLATE = "标题：\n内容摘要：\n来源与原文链接（如有）：\n影响与后续关注（有依据时填写）：";
+
 export default function WorkspacePanel({
   data,
   api,
@@ -43,9 +45,8 @@ export default function WorkspacePanel({
     name: w.name,
     model_id: w.model_id || undefined,
     conversation_model_id: w.conversation_model_id || undefined,
-    conversation_prompt: w.conversation_profile?.prompt || "",
     web_search_enabled: !!w.conversation_profile?.web_search_enabled,
-    ...w.ai_profile,
+    output_template: w.ai_profile?.output_template || DEFAULT_TEMPLATE,
   });
   useEffect(() => {
     setChecked((ids) =>
@@ -84,7 +85,13 @@ export default function WorkspacePanel({
   const attached = bots.filter((b) => b.workspace_id === workspace.id);
   const bindings = subscriptions.filter((s) => s.workspace_id === workspace.id);
   const save = async (values) => {
-    const { name, model_id, conversation_model_id, conversation_prompt, web_search_enabled, ...ai_profile } = values;
+    const {
+      name,
+      model_id,
+      conversation_model_id,
+      web_search_enabled,
+      output_template,
+    } = values;
     const result = await execute(
       () =>
         api(`workspaces/${workspace.id}/settings`, "POST", {
@@ -92,8 +99,8 @@ export default function WorkspacePanel({
           name,
           model_id: model_id || null,
           conversation_model_id: conversation_model_id || null,
-          conversation_profile: { prompt: conversation_prompt || "", web_search_enabled: !!web_search_enabled },
-          ai_profile,
+          conversation_profile: { web_search_enabled: !!web_search_enabled },
+          ai_profile: { output_template: output_template || DEFAULT_TEMPLATE },
         }),
       "工作区配置已保存，新入队任务将使用这套规则。",
       { key: `workspace-save-${workspace.id}`, label: `保存工作区「${name}」` },
@@ -161,9 +168,6 @@ export default function WorkspacePanel({
             </div>
           ))}
         </div>
-        <p className="workspace-help">
-          选择工作区后，右侧配置只作用于这个目录下的任务。
-        </p>
       </aside>
       <section className="panel workspace-content">
         <div className="panel-title">
@@ -208,12 +212,6 @@ export default function WorkspacePanel({
               label: "AI 配置",
               children: (
                 <>
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="Agent 整理使用本工作区的 AI 配置；直接转发和规则处理不调用模型。订阅追加要求只补充当前来源，不改变工作区的关注范围与排除条件。"
-                    style={{ marginBottom: 22 }}
-                  />
                   {dirty && workspace.revision !== loadedRevision && (
                     <Alert
                       type="warning"
@@ -260,77 +258,31 @@ export default function WorkspacePanel({
                       </Form.Item>
                     </div>
                     <Form.Item
-                      name="focus_prompt"
-                      label="AI 关注范围"
-                      extra="描述什么内容值得处理，AI 会结合原文判断相关性；留空表示不过滤主题。"
-                    >
-                      <Input.TextArea
-                        rows={3}
-                        maxLength={12000}
-                        showCount
-                        placeholder="例如：关注国际黄金、白银、原油和主要货币对，以及会影响这些市场的央行政策与地缘事件。"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="excluded_topics"
-                      label="排除内容"
-                      extra="描述应当跳过的内容。排除条件优先于订阅的追加要求。"
-                    >
-                      <Input.TextArea
-                        rows={2}
-                        maxLength={8000}
-                        showCount
-                        placeholder="例如：跳过广告、重复转载、娱乐资讯和只有标题但没有可靠内容的条目。"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="processing_prompt"
-                      label="整理要求"
-                      extra="告诉 AI 如何阅读、提炼和分析。这里配置的要求会被保存到每次任务快照。"
-                    >
-                      <Input.TextArea
-                        rows={5}
-                        maxLength={40000}
-                        showCount
-                        placeholder="例如：先概括已确认事实，再解释可能影响；区分来源观点和自己的推断，不编造实时价格。"
-                      />
-                    </Form.Item>
-                    <Form.Item
                       name="output_template"
                       label="推送内容模板"
-                      extra="用自然语言或固定栏目描述收件人应看到的内容，不需要编写 Markdown 文档文件。"
                     >
-                      <Input.TextArea
-                        rows={6}
-                        maxLength={40000}
-                        showCount
-                        placeholder={
-                          "标题：\n摘要：\n原文链接：\n影响与后续关注："
-                        }
-                      />
+                      <Input.TextArea rows={6} maxLength={40000} showCount />
                     </Form.Item>
-                    <Form.Item name="language" label="输出语言">
-                      <Input placeholder="例如：中文" maxLength={80} />
-                    </Form.Item>
-                    <Form.Item
-                      name="additional_instructions"
-                      label="补充要求（可选）"
-                      extra="原工作区中自定义的其他要求会迁入这里，可直接修改。"
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => {
+                        form.setFieldValue("output_template", DEFAULT_TEMPLATE);
+                        setDirty(true);
+                      }}
+                      style={{ paddingInline: 0, marginTop: -8, marginBottom: 12 }}
                     >
-                      <Input.TextArea rows={3} maxLength={81000} showCount />
-                    </Form.Item>
+                      恢复默认模板
+                    </Button>
                     <div className="panel-title"><h2>对话 Agent</h2></div>
                     <div className="profile-grid">
                       <Form.Item name="conversation_model_id" label="对话模型">
                         <Select allowClear placeholder="使用默认对话模型" options={models.map((m) => ({ value: m.id, label: m.name }))} />
                       </Form.Item>
-                      <Form.Item name="web_search_enabled" label="允许实时检索" valuePropName="checked" extra="仅在全局检索服务已配置时生效。">
+                      <Form.Item name="web_search_enabled" label="允许实时检索" valuePropName="checked">
                         <Checkbox />
                       </Form.Item>
                     </div>
-                    <Form.Item name="conversation_prompt" label="对话风格与边界" extra="仅作用于本工作区的问答，不影响订阅整理。">
-                      <Input.TextArea rows={3} maxLength={8000} showCount />
-                    </Form.Item>
                     <div className="profile-save">
                       <span>
                         {dirty ? "有未保存的修改" : "当前配置已保存"} ·
@@ -356,8 +308,7 @@ export default function WorkspacePanel({
               children: (
                 <>
                   <div className="table-tools">
-                    <p>选择哪些订阅源进入这个工作区。</p>
-                    <Button onClick={() => onAddSubscription(workspace.id)}>
+                    <Button style={{ marginLeft: "auto" }} onClick={() => onAddSubscription(workspace.id)}>
                       添加订阅
                     </Button>
                   </div>

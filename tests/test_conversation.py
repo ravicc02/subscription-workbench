@@ -267,6 +267,10 @@ def test_search_tools_only_open_current_result_and_respect_workspace_permission(
     w.editor.completion = completion
     incoming(w, b, "request", "现在有哪些更新？")
     assert asyncio.run(w.chat_one())
+    assert c.get("/api/workspaces/" + workspace["id"] + "/settings").json()["conversation_profile"] == {
+        "web_search_enabled": True
+    }
+    assert "引用原文" not in calls[0][0][0]["content"]
     trace = json.loads(w.store.db.execute("SELECT tool_trace FROM inbound_messages").fetchone()[0])
     assert [r["name"] for r in trace] == ["search_web", "fetch_page", "fetch_page"]
     assert trace[1]["error"] and trace[2]["host"] == "example.com"

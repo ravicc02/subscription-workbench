@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Subscription Workbench</title>
+  <desc id="desc">An S monogram with three outgoing subscription signals</desc>
+  <rect x="2" y="2" width="92" height="92" rx="18" fill="#173d30"/>
+  <rect x="2.5" y="2.5" width="91" height="91" rx="17.5" fill="none" stroke="#5c816c"/>
+  <text x="25" y="70" fill="#e7efd8" font-family="Georgia, serif" font-size="65" font-weight="700">S</text>
+  <circle cx="71" cy="27" r="5" fill="#e8a872"/>
+  <circle cx="78" cy="42" r="3.5" fill="#9fc5a6"/>
+  <circle cx="75" cy="55" r="2.5" fill="#9fc5a6"/>
+</svg>

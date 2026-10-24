@@ -200,7 +200,17 @@ export default function ConversationPanel({ data, api, execute, active }) {
                 data.bots.find((b) => b.id === row.bot_id)?.name || "已删除",
             },
             { title: "会话目标", dataIndex: "target", ellipsis: true },
-            { title: "问题", dataIndex: "text", ellipsis: true },
+            {
+              title: "问题",
+              render: (_, row) => (
+                <Space size={4} wrap>
+                  <span>{row.text}</span>
+                  {(row.media_types || []).map((kind, index) => (
+                    <Tag key={index}>{({ image: "图片", voice: "语音", video: "视频" })[kind] || kind}</Tag>
+                  ))}
+                </Space>
+              ),
+            },
             {
               title: "状态",
               dataIndex: "state",
@@ -244,6 +254,11 @@ export default function ConversationPanel({ data, api, execute, active }) {
               <b>提问：</b>
               {selected.text}
             </p>
+            {!!selected.media_types?.length && (
+              <p><b>媒体：</b>{selected.media_types.map((kind) =>
+                ({ image: "图片", voice: "语音", video: "视频" })[kind] || kind
+              ).join("、")}</p>
+            )}
             <p>
               <b>回答：</b>
               {selected.response || "尚无回答"}

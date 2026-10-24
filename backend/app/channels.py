@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import io
+import json
 import re
 import secrets
 import time
@@ -21,6 +22,7 @@ CATALOG = [
         "implemented": True,
         "formats": ["text"],
         "fields": [],
+        "inbound_formats": ["text", "image", "voice", "video"],
         "limit": 1600,
     },
     {
@@ -33,6 +35,7 @@ CATALOG = [
             {"name": "token", "label": "Bot Token", "secret": True, "required": True},
             {"name": "chat_id", "label": "接收会话 ID（可在收到消息后选择）"},
         ],
+        "inbound_formats": ["text", "image", "voice", "video"],
         "limit": 3500,
     },
     {
@@ -144,13 +147,38 @@ CATALOG = [
         ],
         "limit": 3000,
     },
+    {
+        "id": "qq",
+        "name": "QQ 官方机器人",
+        "auth": "config",
+        "implemented": True,
+        "push_capable": False,
+        "formats": ["text"],
+        "inbound_formats": ["text", "image", "voice", "video"],
+        "fields": [
+            {"name": "app_id", "label": "AppID", "required": True},
+            {"name": "app_secret", "label": "AppSecret", "secret": True, "required": True},
+        ],
+        "limit": 1800,
+    },
+    {
+        "id": "feishu",
+        "name": "飞书应用机器人",
+        "auth": "config",
+        "implemented": True,
+        "formats": ["text"],
+        "inbound_formats": ["text", "image", "voice", "video"],
+        "fields": [
+            {"name": "app_id", "label": "App ID", "required": True},
+            {"name": "app_secret", "label": "App Secret", "secret": True, "required": True},
+        ],
+        "limit": 3000,
+    },
     *[
         {"id": k, "name": v, "implemented": False, "auth": "planned"}
         for k, v in [
-            ("qq", "QQ 官方机器人"),
             ("wecom", "企业微信"),
             ("wechat_official", "微信公众号"),
-            ("feishu", "飞书"),
             ("dingtalk", "钉钉"),
             ("line", "LINE"),
             ("kook", "KOOK"),
@@ -176,6 +204,8 @@ class Channels:
     def __init__(self, network, proxy_config=None):
         self.net = network
         self.proxy_config = proxy_config
+        self.sockets = None
+        self.feishu_tokens = {}
 
     @staticmethod
     def draft_config(kind, config):
@@ -198,6 +228,15 @@ class Channels:
             if kind == "slack" and not re.fullmatch(r"[CGD][A-Z0-9]{6,20}", channel):
                 raise ValueError("Slack 频道 / 会话 ID 无效")
             result.update(token=token, channel_id=channel)
+        if kind in ("qq", "feishu"):
+            app_id = str(result.get("app_id") or "").strip()
+            secret = str(result.get("app_secret") or "").strip()
+            pattern = r"[0-9]{5,20}" if kind == "qq" else r"cli_[A-Za-z0-9]{8,40}"
+            if not re.fullmatch(pattern, app_id):
+                raise ValueError("机器人 App ID 格式无效")
+            if not 8 <= len(secret) <= 256 or any(c.isspace() for c in secret):
+                raise ValueError("机器人 App Secret 无效")
+            result.update(app_id=app_id, app_secret=secret)
         if kind == "onebot":
             url = str(result.get("url") or "").strip().rstrip("/")
             target = str(result.get("target_id") or "").strip()
@@ -272,6 +311,22 @@ class Channels:
             payload,
             **kwargs,
         )
+
+    async def feishu_token(self, config):
+        key = hashlib.sha256((config["app_id"] + "\0" + config["app_secret"]).encode()).hexdigest()
+        cached = self.feishu_tokens.get(key)
+        if cached and cached[1] > time.time() + 60:
+            return cached[0]
+        data = await self.net.json(
+            "POST",
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            {"app_id": config["app_id"], "app_secret": config["app_secret"]},
+        )
+        if data.get("code") != 0 or not data.get("tenant_access_token"):
+            raise PlatformRejected("飞书应用认证失败")
+        token = data["tenant_access_token"]
+        self.feishu_tokens[key] = (token, time.time() + max(60, int(data.get("expire", 7200))))
+        return token
 
     @staticmethod
     def info(kind):
@@ -358,6 +413,32 @@ class Channels:
                 c,
                 "CONNECTED" if c["targets"] else "WAITING_TARGET",
                 {"account": me["result"].get("username", "Telegram")},
+            )
+        if kind == "qq":
+            c = self.draft_config(kind, config)
+            data = await self.net.json(
+                "POST",
+                "https://bots.qq.com/app/getAppAccessToken",
+                {"appId": c["app_id"], "clientSecret": c["app_secret"]},
+            )
+            if not data.get("access_token") or not data.get("expires_in"):
+                raise PlatformRejected("QQ AppID 或 AppSecret 验证失败")
+            return ({**c, "targets": []}, "WAITING_TARGET", {"account": c["app_id"]})
+        if kind == "feishu":
+            c = self.draft_config(kind, config)
+            token = await self.feishu_token(c)
+            data = await self.net.json(
+                "GET",
+                "https://open.feishu.cn/open-apis/bot/v3/info",
+                headers={"Authorization": "Bearer " + token},
+            )
+            bot = data.get("bot") or {}
+            if data.get("code") != 0 or not isinstance(bot, dict) or not bot.get("open_id"):
+                raise PlatformRejected("飞书机器人信息验证失败，请检查应用是否已发布及权限")
+            return (
+                {**c, "bot_open_id": bot["open_id"], "targets": []},
+                "WAITING_TARGET",
+                {"account": bot.get("app_name") or c["app_id"]},
             )
         if kind == "discord":
             c = self.draft_config(kind, config)
@@ -528,10 +609,28 @@ class Channels:
                         and isinstance(part.get("text_item"), dict)
                         and isinstance(part["text_item"].get("text"), str)
                     ).strip()
+                    attachments = []
+                    for part in msg.get("item_list") or []:
+                        if not isinstance(part, dict):
+                            continue
+                        media_kind, field = {
+                            2: ("image", "image_item"),
+                            3: ("voice", "voice_item"),
+                            5: ("video", "video_item"),
+                        }.get(part.get("type"), (None, None))
+                        value = part.get(field) if field else None
+                        if media_kind and isinstance(value, dict):
+                            ref = {"type": media_kind, "media": value.get("media") or {}}
+                            if media_kind == "image" and value.get("aeskey"):
+                                ref["aeskey"] = value["aeskey"]
+                            if media_kind == "voice" and isinstance(value.get("text"), str):
+                                ref["transcript"] = value["text"][:4000]
+                            attachments.append(ref)
                     identity = msg.get("message_id") or msg.get("msg_id") or msg.get("client_id")
-                    if identity and isinstance(text, str) and 1 <= len(text) <= 4000:
+                    if identity and (text or attachments) and len(text) <= 4000:
                         messages.append(
-                            {"id": str(identity), "target": user, "sender": user, "text": text}
+                            {"id": str(identity), "target": user, "sender": user,
+                             "text": text, "attachments": attachments[:3]}
                         )
         elif kind == "telegram":
             data = await self.telegram_request(
@@ -559,7 +658,18 @@ class Channels:
                         }
                     )
                 user = msg.get("from") or {}
-                text = msg.get("text")
+                text = msg.get("text") or msg.get("caption") or ""
+                attachments = []
+                if msg.get("photo"):
+                    photo = msg["photo"][-1]
+                    attachments.append({"type": "image", "file_id": photo.get("file_id"),
+                                        "file_size": photo.get("file_size", 0)})
+                for field, media_kind in (("video", "video"), ("voice", "voice"),
+                                          ("audio", "voice")):
+                    if isinstance(msg.get(field), dict):
+                        media = msg[field]
+                        attachments.append({"type": media_kind, "file_id": media.get("file_id"),
+                                            "file_size": media.get("file_size", 0)})
                 if (
                     item.get("message")
                     and chat.get("id")
@@ -575,7 +685,7 @@ class Channels:
                         or str(msg.get("reply_to_message", {}).get("from", {}).get("id", ""))
                         == c.get("account_id", "missing")
                     )
-                    if addressed and 1 <= len(text) <= 4000:
+                    if addressed and (text or attachments) and len(text) <= 4000:
                         messages.append(
                             {
                                 "id": str(item["update_id"]),
@@ -584,6 +694,7 @@ class Channels:
                                 "thread": str(msg.get("message_thread_id", "")),
                                 "group": group,
                                 "text": text,
+                                "attachments": attachments[:3],
                             }
                         )
         targets = c.setdefault("targets", [])
@@ -592,7 +703,35 @@ class Channels:
                 targets.append({**t, "selected": not targets})
         return (c, messages) if with_messages else c
 
-    async def send(self, kind, c, target, text, delivery_id):
+    async def send(self, kind, c, target, text, delivery_id, *, bot_id=None, reply_to=None):
+        if kind == "qq":
+            if not reply_to:
+                raise PlatformRejected("QQ 官方接口不支持订阅主动推送，请通过被动回复与机器人交互")
+            if target not in {t["id"] for t in c.get("targets", []) if t.get("selected")}:
+                raise PlatformRejected("QQ 接收目标已变更")
+            if not self.sockets or not bot_id:
+                raise ContextRequired("QQ 长连接尚未建立")
+            return await self.sockets.send_qq(bot_id, target, text, delivery_id, reply_to)
+        if kind == "feishu":
+            if target not in {t["id"] for t in c.get("targets", []) if t.get("selected")}:
+                raise PlatformRejected("飞书接收目标已变更")
+            token = await self.feishu_token(c)
+            data = await self.net.json(
+                "POST",
+                "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+                {
+                    "receive_id": target,
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}, ensure_ascii=False),
+                    "uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, delivery_id)),
+                },
+                headers={"Authorization": "Bearer " + token},
+            )
+            if data.get("code") != 0:
+                raise PlatformRejected("飞书发送被拒绝：" + str(data.get("msg", "unknown"))[:80])
+            if not (data.get("data") or {}).get("message_id"):
+                raise RuntimeError("飞书发送结果没有可确认的消息 ID")
+            return {"accepted": True, "message_id": data["data"]["message_id"]}
         if kind == "weixin":
             context = c.get("contexts", {}).get(target)
             if not context:

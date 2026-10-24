@@ -302,6 +302,13 @@ header p {
 .platform-card p {
   font-size: 12px;
 }
+.platform-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.platform-formats .ant-tag { margin: 0; }
 .connect-heading {
   display: flex;
   gap: 15px;
